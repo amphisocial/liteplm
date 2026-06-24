@@ -1,0 +1,17 @@
+{
+  "name": "lite-plm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lite-PLM with AI — multi-tenant product lifecycle management for small/mid-cap manufacturers.",
+  "main": "src/server.js",
+  "scripts": { "start": "node src/server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.11.5",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6"
+  },
+  "license": "UNLICENSED"
+}
