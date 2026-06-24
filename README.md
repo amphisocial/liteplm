@@ -30,3 +30,11 @@ Set OPENAI_API_KEY to interpret plain-English queries; otherwise keyword search.
 ## API
 Generate a token in "API & Tokens", then send `Authorization: Bearer <token>`.
 All calls are company-scoped. See the in-app API page for the endpoint list.
+
+## Importing data (Admin → Import / Setup)
+- **Load sample catalog** — one click loads a realistic medical-supplier catalog
+  (1,200 parts, 3–4 revisions each, 200 multi-level BOMs, 620 commodities with
+  1,800+ vendor parts). Wipes existing data first.
+- **Import your own CSVs** — upload items / revisions / boms / vendors /
+  vendor_parts; files reference each other by part number and vendor code.
+  Sample CSVs live in db/samples/medical/ and double as format templates.

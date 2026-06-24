@@ -8,6 +8,7 @@ import { resolveCtx } from "./auth.js";
 import account from "./routes/account.js";
 import catalog from "./routes/catalog.js";
 import eco from "./routes/eco.js";
+import adminImport from "./routes/admin-import.js";
 import { aiEnabled } from "./lib/ai.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,7 @@ app.get("/api/meta", (_req, res) => res.json({ aiEnabled: aiEnabled() }));
 app.use("/api", account);
 app.use("/api", catalog);
 app.use("/api", eco);
+app.use("/api", adminImport);
 
 // global error handler so a thrown query never crashes the process
 app.use((err, _req, res, _next) => {
