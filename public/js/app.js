@@ -33,6 +33,14 @@ const ICON = {
 
 async function api2(path) { try { return await api(path); } catch { return null; } }
 
+// type (Make/Buy) + lifecycle badge helpers
+const WRENCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17l3 3 5.5-5.5a4 4 0 0 0 5.2-5.2l-2.6 2.6-2.2-.4-.4-2.2 2.6-2.6z"/></svg>';
+const CART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2 3h3l2.4 12.4a1.5 1.5 0 0 0 1.5 1.2h8.2a1.5 1.5 0 0 0 1.5-1.2L22 7H6"/></svg>';
+const typeBadge = (t) => t === "Buy"
+  ? `<span class="tb tb-buy">${CART}Buy</span>`
+  : `<span class="tb tb-make">${WRENCH}Make</span>`;
+const lifeBadge = (l) => l ? `<span class="lc lc-${esc(l)}">${esc(l)}</span>` : "";
+
 (async function boot() {
   META = (await api2("/meta")) || META;
   const m = await api2("/me");
@@ -149,7 +157,9 @@ async function viewItems() {
       <div class="inline-form">
         <div class="field"><label>Number</label><input id="i_num" placeholder="CMP-1180"></div>
         <div class="field"><label>Name</label><input id="i_name" placeholder="Luer Connector, Polycarbonate"></div>
-        <div class="field" style="max-width:90px"><label>UoM</label><input id="i_uom" value="EA"></div>
+        <div class="field" style="max-width:120px"><label>Type</label><select id="i_type"><option>Make</option><option>Buy</option></select></div>
+        <div class="field" style="max-width:150px"><label>Lifecycle</label><select id="i_life"><option>Prototype</option><option>Preproduction</option><option>Production</option></select></div>
+        <div class="field" style="max-width:80px"><label>UoM</label><input id="i_uom" value="EA"></div>
         <button class="btn" id="i_add">Add item</button></div></div></div>` : ""}
     <div class="card"><div class="card-h"><span>All items</span><span class="count-tag" id="i_count"></span></div>
       <div class="card-b" style="padding-bottom:6px"><div class="filterbar"><input id="i_filter" placeholder="Filter by number or name…"></div></div>
@@ -157,7 +167,7 @@ async function viewItems() {
   if (canEdit()) {
     $("#i_new").onclick = () => { const f = $("#i_form"); f.style.display = f.style.display === "none" ? "" : "none"; };
     $("#i_add").onclick = async () => {
-      try { await api("/items", { method: "POST", body: { number: $("#i_num").value, name: $("#i_name").value, uom: $("#i_uom").value } }); toast("Item created (rev A)."); viewItems(); }
+      try { await api("/items", { method: "POST", body: { number: $("#i_num").value, name: $("#i_name").value, uom: $("#i_uom").value, partType: $("#i_type").value, lifecycle: $("#i_life").value } }); toast("Item created (rev A)."); viewItems(); }
       catch (e) { toast(e.message, "bad"); }
     };
   }
@@ -165,9 +175,10 @@ async function viewItems() {
   ITEMS_CACHE = items;
   const draw = (rows) => {
     $("#i_count").textContent = fmt(rows.length) + " items";
-    $("#i_list").innerHTML = rows.length ? `<table><thead><tr><th>Number</th><th>Name</th><th>UoM</th><th>Latest rev</th><th>Status</th></tr></thead><tbody>
-      ${rows.slice(0, 600).map((i) => `<tr class="click" data-id="${i.id}"><td class="num">${esc(i.number)}</td><td>${esc(i.name)}</td><td class="muted">${esc(i.uom)}</td>
-        <td class="mono">${esc(i.latest_rev || "—")}</td><td>${i.latest_status ? badge(i.latest_status) : "—"}</td></tr>`).join("")}
+    $("#i_list").innerHTML = rows.length ? `<table><thead><tr><th>Number</th><th>Name</th><th>Type</th><th>Lifecycle</th><th>UoM</th><th>Latest rev</th><th>Status</th></tr></thead><tbody>
+      ${rows.slice(0, 600).map((i) => `<tr class="click" data-id="${i.id}"><td class="num">${esc(i.number)}</td><td>${esc(i.name)}</td>
+        <td>${i.latest_type ? typeBadge(i.latest_type) : "—"}</td><td>${i.latest_lifecycle ? lifeBadge(i.latest_lifecycle) : "—"}</td>
+        <td class="muted">${esc(i.uom)}</td><td class="mono">${esc(i.latest_rev || "—")}</td><td>${i.latest_status ? badge(i.latest_status) : "—"}</td></tr>`).join("")}
       </tbody></table>${rows.length > 600 ? `<div class="note" style="padding:12px 18px">Showing first 600 of ${fmt(rows.length)} — narrow with the filter above.</div>` : ""}`
       : `<div class="empty">No items match.</div>`;
     $("#i_list").querySelectorAll("tr.click").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.id));
@@ -185,15 +196,27 @@ async function itemDetail(id, focusRevId) {
   if (!revs.length) { toast("Item has no revisions.", "bad"); return; }
   const focus = (focusRevId && revs.find((r) => String(r.id) === String(focusRevId))) || revs[revs.length - 1];
   const f = await api("/revisions/" + focus.id + "/focus");
+  const editableRev = canEdit() && focus.status !== "released";
 
   main().innerHTML = `<span class="back" id="back">← Items</span>
     <div class="page-h"><div>
-      <h2 class="mono" style="font-size:21px">${esc(d.item.number)} <span class="badge b-${esc(focus.status)}" style="font-size:11.5px;vertical-align:middle;margin-left:4px">Rev ${esc(focus.rev)} · ${esc(focus.status).replace("_", " ")}</span></h2>
+      <h2 class="mono" style="font-size:21px">${esc(d.item.number)}
+        <span class="badge b-${esc(focus.status)}" style="font-size:11.5px;vertical-align:middle;margin-left:4px">Rev ${esc(focus.rev)} · ${esc(focus.status).replace("_", " ")}</span>
+        ${typeBadge(focus.part_type)} ${lifeBadge(focus.lifecycle)}</h2>
       <div class="sub">${esc(d.item.name)}${d.item.description ? " — " + esc(d.item.description) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div></div>
       ${canEdit() ? `<button class="btn ghost" id="revise">Revise → new working copy</button>` : ""}</div>
+    ${editableRev ? `<div class="card"><div class="card-b" style="display:flex;gap:14px;align-items:end;flex-wrap:wrap">
+      <div class="field" style="margin:0;max-width:160px"><label>Type (rev ${esc(focus.rev)})</label><select id="ed_type">${["Make","Buy"].map((t)=>`<option ${t===focus.part_type?"selected":""}>${t}</option>`).join("")}</select></div>
+      <div class="field" style="margin:0;max-width:180px"><label>Lifecycle (rev ${esc(focus.rev)})</label><select id="ed_life">${["Prototype","Preproduction","Production"].map((t)=>`<option ${t===focus.lifecycle?"selected":""}>${t}</option>`).join("")}</select></div>
+      <button class="btn sm" id="ed_save">Save attributes</button></div></div>` : ""}
     <div class="grid2">
-      <div class="card"><div class="card-h"><span>Revisions</span><span class="hint">click a row to focus</span></div><div class="tablewrap"><table><thead><tr><th>Rev</th><th>Status</th><th>Released</th></tr></thead><tbody>
-        ${revs.map((r) => `<tr class="click rev-row ${String(r.id) === String(focus.id) ? "active" : ""}" data-rev="${r.id}"><td class="mono">${esc(r.rev)}</td><td>${badge(r.status)}</td><td class="muted">${r.released_at ? new Date(r.released_at).toLocaleDateString() : "—"}</td></tr>`).join("")}
+      <div class="card"><div class="card-h"><span>Revisions</span>
+        <div class="cmpbar"><span class="sel" id="cmpsel">select 2 to compare</span><button class="btn sm" id="cmpbtn" disabled>Compare</button></div></div>
+        <div class="tablewrap"><table><thead><tr><th></th><th>Rev</th><th>Status</th><th>Type</th><th>Lifecycle</th><th>Released</th></tr></thead><tbody>
+        ${revs.map((r) => `<tr class="click rev-row ${String(r.id) === String(focus.id) ? "active" : ""}" data-rev="${r.id}" data-letter="${esc(r.rev)}">
+          <td><input type="checkbox" class="ck cmp-ck" data-rev="${r.id}" data-letter="${esc(r.rev)}"></td>
+          <td class="mono">${esc(r.rev)}</td><td>${badge(r.status)}</td><td>${typeBadge(r.part_type)}</td><td>${lifeBadge(r.lifecycle)}</td>
+          <td class="muted">${r.released_at ? new Date(r.released_at).toLocaleDateString() : "—"}</td></tr>`).join("")}
         </tbody></table></div></div>
       <div class="card"><div class="card-h">Where used <span class="hint">rev ${esc(focus.rev)}</span></div>
         ${f.whereUsed.length ? `<div class="tablewrap"><table><thead><tr><th>Assembly</th><th>Name</th><th>Uses rev</th><th>Qty</th></tr></thead><tbody>
@@ -205,19 +228,56 @@ async function itemDetail(id, focusRevId) {
 
   $("#back").onclick = viewItems;
   if (canEdit()) $("#revise").onclick = async () => { try { const r = await api("/items/" + id + "/revise", { method: "POST" }); toast("Created working rev " + r.revision.rev + "."); itemDetail(id, r.revision.id); } catch (e) { toast(e.message, "bad"); } };
-  // revision focus
-  $("#main").querySelectorAll(".rev-row").forEach((tr) => tr.onclick = () => itemDetail(id, tr.dataset.rev));
-  // where-used -> open that assembly
+  if (editableRev) $("#ed_save").onclick = async () => { try { await api("/revisions/" + focus.id, { method: "PATCH", body: { partType: $("#ed_type").value, lifecycle: $("#ed_life").value } }); toast("Attributes updated."); itemDetail(id, focus.id); } catch (e) { toast(e.message, "bad"); } };
+  // revision focus (ignore clicks originating on the checkbox)
+  $("#main").querySelectorAll(".rev-row").forEach((tr) => tr.onclick = (e) => { if (e.target.classList.contains("cmp-ck")) return; itemDetail(id, tr.dataset.rev); });
   $("#main").querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
+  // compare selection
+  const sel = [];
+  $("#main").querySelectorAll(".cmp-ck").forEach((ck) => ck.onclick = (e) => {
+    e.stopPropagation();
+    const id2 = ck.dataset.rev;
+    const i = sel.findIndex((s) => s.id === id2);
+    if (ck.checked) { if (sel.length >= 2) { ck.checked = false; toast("Pick exactly two revisions.", "bad"); return; } sel.push({ id: id2, letter: ck.dataset.letter }); }
+    else if (i >= 0) sel.splice(i, 1);
+    $("#cmpsel").textContent = sel.length ? sel.map((s) => "Rev " + s.letter).join(" ↔ ") : "select 2 to compare";
+    $("#cmpbtn").disabled = sel.length !== 2;
+  });
+  $("#cmpbtn").onclick = () => {
+    if (sel.length !== 2) return;
+    const ordered = [...sel].sort((a, b) => a.letter.localeCompare(b.letter)); // earlier = from
+    compareRevsModal(ordered[0].id, ordered[1].id, d.item.number);
+  };
   renderBom(focus, id, f.bom);
   renderVendorParts(f.vendorParts, d.item, focus);
+}
+
+async function compareRevsModal(fromId, toId, itemNumber) {
+  try {
+    const r = await api("/compare?from=" + fromId + "&to=" + toId);
+    openModal(`Compare — ${esc(itemNumber)}`,
+      `<div class="rl-cmp-h">Rev ${esc(r.from.rev)} <span class="arrow">→</span> Rev ${esc(r.to.rev)} <span class="muted">BOM redline</span></div>` + redlineHtml(r.diff), true);
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+// redline list -> html (shared by rev compare and ECO compare)
+function redlineHtml(diff) {
+  if (!diff.length) return `<div class="redline"><div class="rl-none">No BOM changes between these revisions.</div></div>`;
+  const tag = { add: '<span class="rl-tag rl-add">ADD</span>', delete: '<span class="rl-tag rl-del">DELETE</span>', update: '<span class="rl-tag rl-upd">UPDATE</span>' };
+  return `<div class="redline">${diff.map((e) => {
+    let detail = "";
+    if (e.type === "add") detail = `<div class="rl-chg">Added to BOM${e.child_rev ? ` · child rev ${esc(e.child_rev)}` : ""}${e.qty != null ? ` · qty ${esc(e.qty)}` : ""}</div>`;
+    else if (e.type === "delete") detail = `<div class="rl-chg">Removed from BOM</div>`;
+    else detail = `<div class="rl-chg">${e.changes.map((c) => `${esc(c.field)}: <span class="rl-from">${esc(c.from)}</span> → <span class="rl-to">${esc(c.to)}</span>`).join(" · ")}</div>`;
+    return `<div class="rl-row">${tag[e.type]}<div class="rl-main"><span class="pn">${esc(e.child_number)}</span> ${esc(e.child_name || "")}${detail}</div></div>`;
+  }).join("")}</div>`;
 }
 
 function renderBom(rev, itemId, lines) {
   const editable = canEdit() && rev.status !== "released";
   $("#bomwrap").innerHTML = `
-    ${lines.length ? `<div class="tablewrap"><table><thead><tr><th>Child</th><th>Name</th><th>Child rev</th><th>Qty</th><th>Ref des</th>${editable ? "<th></th>" : ""}</tr></thead><tbody>
-      ${lines.map((l) => `<tr><td class="num click bomchild" data-num="${esc(l.child_number)}">${esc(l.child_number)}</td><td>${esc(l.child_name)}</td><td class="mono muted">${esc(l.child_rev || "—")}</td><td>${esc(l.qty)}</td><td class="muted">${esc(l.ref_des || "")}</td>
+    ${lines.length ? `<div class="tablewrap"><table><thead><tr><th>Child</th><th>Name</th><th>Type</th><th>Child rev</th><th>Qty</th><th>Ref des</th>${editable ? "<th></th>" : ""}</tr></thead><tbody>
+      ${lines.map((l) => `<tr><td class="num click bomchild" data-num="${esc(l.child_number)}">${esc(l.child_number)}</td><td>${esc(l.child_name)}</td><td>${l.child_type ? typeBadge(l.child_type) : "—"}</td><td class="mono muted">${esc(l.child_rev || "—")}</td><td>${esc(l.qty)}</td><td class="muted">${esc(l.ref_des || "")}</td>
         ${editable ? `<td style="text-align:right"><button class="btn danger sm" data-del="${l.id}">remove</button></td>` : ""}</tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">No components on this revision.</div>`}
     ${editable ? `<div class="inline-form" style="margin-top:14px">
@@ -226,7 +286,6 @@ function renderBom(rev, itemId, lines) {
       <div class="field"><label>Ref des</label><input id="b_ref" placeholder="R1, R2"></div>
       <button class="btn" id="b_add">Add component</button></div>`
     : rev.status === "released" ? `<div class="note">This revision is released and locked. Use “Revise” to make changes.</div>` : ""}`;
-  // clicking a child part number navigates to that child item
   $("#bomwrap").querySelectorAll(".bomchild").forEach((td) => td.onclick = async () => {
     try { const items = ITEMS_CACHE.length ? ITEMS_CACHE : (await api("/items")).items; const it = items.find((x) => x.number === td.dataset.num); if (it) itemDetail(it.id); } catch (_) {}
   });
@@ -244,10 +303,10 @@ function renderVendorParts(vps, item, rev) {
 }
 
 // ---- modal helpers ----
-function openModal(title, bodyHtml) {
+function openModal(title, bodyHtml, wide) {
   closeModal();
   const bg = document.createElement("div"); bg.className = "modal-bg"; bg.id = "modalBg";
-  bg.innerHTML = `<div class="modal"><div class="modal-h"><b>${title}</b><button class="modal-x" id="modalX">×</button></div><div class="modal-b">${bodyHtml}</div></div>`;
+  bg.innerHTML = `<div class="modal" style="max-width:${wide ? 620 : 440}px"><div class="modal-h"><b>${title}</b><button class="modal-x" id="modalX">×</button></div><div class="modal-b">${bodyHtml}</div></div>`;
   document.body.appendChild(bg);
   bg.addEventListener("click", (e) => { if (e.target === bg) closeModal(); });
   $("#modalX").onclick = closeModal;
@@ -266,6 +325,17 @@ function vendorPartModal(vp, item, rev) {
     ${vp.vendor_contact ? row("Vendor contact", vp.vendor_contact) : ""}`);
 }
 
+
+async function ecoCompareModal(ecoId) {
+  try {
+    const r = await api("/ecos/" + ecoId + "/compare");
+    const body = r.comparisons.map((c) => `
+      <div class="cmp-item-h"><span class="pn mono" style="color:var(--teal-d)">${esc(c.number)}</span> ${esc(c.name)}
+        <span class="muted mono" style="font-weight:400">${c.fromRev ? "Rev " + esc(c.fromRev) : "(no prior released)"} → Rev ${esc(c.toRev)}</span></div>
+      ${redlineHtml(c.diff)}`).join("");
+    openModal(`ECO ${esc(r.eco.number)} — BOM changes`, body || `<div class="rl-none">No affected items.</div>`, true);
+  } catch (e) { toast(e.message, "bad"); }
+}
 
 // ---------------- ECOs ----------------
 async function viewEcos() {
@@ -299,13 +369,14 @@ async function ecoDetail(id) {
   main().innerHTML = `<span class="back" id="back">← Change Orders</span>
     <div class="page-h"><div><h2 class="mono" style="font-size:20px">${esc(e.number)} ${badge(e.status)}</h2><div class="sub">${esc(e.title)}</div></div></div>
     <div class="card"><div class="card-h">Approval route</div><div class="card-b"><div class="steps">${stepEls || '<span class="muted">No workflow configured.</span>'}</div></div></div>
-    <div class="card"><div class="card-h">Affected items</div><div class="card-b" id="aff"></div></div>
+    <div class="card"><div class="card-h"><span>Affected items</span>${d.affected.length ? `<button class="btn ghost sm" id="ecoCompare">Compare BOMs (From → To)</button>` : ""}</div><div class="card-b" id="aff"></div></div>
     ${canDecide ? `<div class="card"><div class="card-h">Your decision — ${esc(d.pendingStep.name)}</div><div class="card-b">
       <div class="field"><label>Disposition</label><input id="disp" placeholder="Use-as-is, Rework, Scrap"></div>
       <div class="field"><label>Comment</label><textarea id="cmt" rows="2"></textarea></div>
       <div class="row"><button class="btn" id="approve">Approve step</button><button class="btn danger" id="reject">Reject ECO</button></div></div></div>` : ""}
     <div class="card"><div class="card-h">Approval history</div><div class="tablewrap" id="hist"></div></div>`;
   $("#back").onclick = viewEcos;
+  if ($("#ecoCompare")) $("#ecoCompare").onclick = () => ecoCompareModal(id);
   const draft = e.status === "draft" && canEdit();
   $("#aff").innerHTML = `
     ${d.affected.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Name</th><th>Rev</th><th>Status</th></tr></thead><tbody>

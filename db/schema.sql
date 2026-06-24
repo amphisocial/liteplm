@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS item_revisions (
   item_id      BIGINT NOT NULL REFERENCES items(id),
   rev          TEXT NOT NULL,
   status       TEXT NOT NULL DEFAULT 'working',   -- working | in_review | released | obsolete
+  lifecycle    TEXT NOT NULL DEFAULT 'Production', -- Prototype | Preproduction | Production
+  part_type    TEXT NOT NULL DEFAULT 'Make',       -- Make | Buy
   notes        TEXT DEFAULT '',
   released_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -139,5 +141,7 @@ CREATE INDEX IF NOT EXISTS idx_ecos_co      ON ecos(company_id);
 ALTER TABLE vendor_parts ALTER COLUMN item_id DROP NOT NULL;
 ALTER TABLE vendor_parts ADD COLUMN IF NOT EXISTS item_revision_id BIGINT REFERENCES item_revisions(id);
 ALTER TABLE bom_lines    ADD COLUMN IF NOT EXISTS child_rev_id BIGINT REFERENCES item_revisions(id);
+ALTER TABLE item_revisions ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'Production';
+ALTER TABLE item_revisions ADD COLUMN IF NOT EXISTS part_type TEXT NOT NULL DEFAULT 'Make';
 CREATE INDEX IF NOT EXISTS idx_bom_childrev ON bom_lines(company_id, child_rev_id);
 CREATE INDEX IF NOT EXISTS idx_vp_rev       ON vendor_parts(company_id, item_revision_id);

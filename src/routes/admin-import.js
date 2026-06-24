@@ -61,12 +61,14 @@ async function runImport(companyId, files) {
     // revisions — if none supplied, give every item a working rev A
     let revSource = revisions;
     if (!revSource.length) revSource = itemRows.map((i) => ({ item_number: i.number, rev: "A", status: "working" }));
-    await bulkInsert(client, "item_revisions", ["company_id", "item_id", "rev", "status", "released_at"], revSource, (x) => {
+    await bulkInsert(client, "item_revisions", ["company_id", "item_id", "rev", "status", "lifecycle", "part_type", "released_at"], revSource, (x) => {
       const id = itemByNum.get((x.item_number || "").trim());
       if (!id || !x.rev) return null;
       const status = ["working", "in_review", "released", "obsolete"].includes(x.status) ? x.status : "working";
+      const life = ["Prototype", "Preproduction", "Production"].includes(x.lifecycle) ? x.lifecycle : "Production";
+      const ptype = x.part_type === "Buy" ? "Buy" : "Make";
       const released = status === "released" ? new Date() : null;
-      return [companyId, id, x.rev.trim(), status, released];
+      return [companyId, id, x.rev.trim(), status, life, ptype, released];
     });
     const revRows = (await client.query(
       "SELECT iv.id, iv.rev, iv.item_id, i.number FROM item_revisions iv JOIN items i ON i.id=iv.item_id WHERE iv.company_id=$1 ORDER BY iv.id", [companyId]

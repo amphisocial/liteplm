@@ -38,3 +38,14 @@ All calls are company-scoped. See the in-app API page for the endpoint list.
 - **Import your own CSVs** — upload items / revisions / boms / vendors /
   vendor_parts; files reference each other by part number and vendor code.
   Sample CSVs live in db/samples/medical/ and double as format templates.
+
+## Revisions, attributes & change comparison
+- **Lifecycle State** and **Type (Make/Buy)** live on each revision, so they can
+  change as a part matures (Prototype → Preproduction → Production). Purchased
+  commodities are Buy / Production. Make = blue badge + wrench, Buy = amber + cart,
+  shown across the items list, item header, revision table, and BOM rows.
+- **Compare two revisions** — select two revisions on an item and click Compare to
+  see a BOM redline: Add (new line), Delete (removed line), Update (qty or ref des
+  changed, shown X → Y).
+- **ECO From → To** — on a change order, "Compare BOMs" redlines each affected
+  item from its latest released revision (From) to the working revision (To).

@@ -5,6 +5,7 @@
 import { Router } from "express";
 import { query, one } from "../db.js";
 import { requireAuth, requireRole } from "../auth.js";
+import { diffBom } from "../lib/bomdiff.js";
 
 const r = Router();
 r.use(requireAuth);
@@ -122,6 +123,31 @@ r.post("/ecos/:id/decide", async (req, res) => {
   await query("UPDATE ecos SET status='implemented', current_seq=0 WHERE id=$1 AND company_id=$2", [eco.id, co(req)]);
   await query("UPDATE item_revisions SET status='released', released_at=now() WHERE id IN (SELECT item_revision_id FROM eco_affected WHERE eco_id=$1) AND company_id=$2", [eco.id, co(req)]);
   res.json({ ok: true, result: "implemented" });
+});
+
+// ECO compare: for each affected (To) revision, auto-pick From = the latest
+// RELEASED revision of the same item created before it, and redline From -> To.
+r.get("/ecos/:id/compare", async (req, res) => {
+  const eco = await one("SELECT * FROM ecos WHERE id=$1 AND company_id=$2", [req.params.id, co(req)]);
+  if (!eco) return res.status(404).json({ error: "ECO not found." });
+  const toRevs = await query(
+    `SELECT iv.id, iv.rev, iv.item_id, i.number, i.name
+       FROM eco_affected a JOIN item_revisions iv ON iv.id=a.item_revision_id JOIN items i ON i.id=iv.item_id
+     WHERE a.eco_id=$1 AND a.company_id=$2 ORDER BY i.number`, [eco.id, co(req)]);
+  const linesOf = (revId) => query(
+    `SELECT b.qty, b.ref_des, b.child_item_id, ci.number AS child_number, ci.name AS child_name, cv.rev AS child_rev
+       FROM bom_lines b JOIN items ci ON ci.id=b.child_item_id LEFT JOIN item_revisions cv ON cv.id=b.child_rev_id
+     WHERE b.parent_rev_id=$1 AND b.company_id=$2`, [revId, co(req)]);
+  const out = [];
+  for (const to of toRevs) {
+    const from = await one(
+      "SELECT id, rev FROM item_revisions WHERE item_id=$1 AND company_id=$2 AND status='released' AND id<$3 ORDER BY id DESC LIMIT 1",
+      [to.item_id, co(req), to.id]);
+    const toLines = await linesOf(to.id);
+    const fromLines = from ? await linesOf(from.id) : [];
+    out.push({ number: to.number, name: to.name, fromRev: from ? from.rev : null, toRev: to.rev, diff: diffBom(fromLines, toLines) });
+  }
+  res.json({ eco: { number: eco.number, title: eco.title }, comparisons: out });
 });
 
 export default r;
