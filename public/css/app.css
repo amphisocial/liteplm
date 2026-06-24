@@ -249,3 +249,12 @@ tr.active td{background:var(--teal-soft)!important;box-shadow:inset 3px 0 0 var(
 .metaline{font-size:12px;color:var(--muted);margin-top:8px}
 .metaline b{color:var(--slate);font-weight:600}
 .await{font-size:13px;color:var(--warn);background:var(--warn-soft);border:1px solid #eedcb3;border-radius:8px;padding:10px 12px}
+
+/* ---------- AI search feedback ---------- */
+.ai-err{background:#fbeaea;border:1px solid #f1cccc;color:#9a2b2b;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13.5px;line-height:1.5;word-break:break-word}
+.ai-err b{color:#7d1f1f}
+.ai-err-sub{color:#b06a6a;font-size:12.5px;margin-top:4px}
+.ai-answer{background:#eef7f7;border:1px solid #cfe9e8;color:var(--teal-d);border-radius:10px;padding:11px 14px;margin-bottom:14px;font-size:14px}
+.modehint b{color:var(--ink)}
+/* dashboard stats responsive enough for 5 cards */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}

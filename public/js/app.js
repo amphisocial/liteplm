@@ -124,7 +124,7 @@ async function viewDashboard() {
   main().innerHTML = `<div class="page-h"><div><h2>Dashboard</h2><div class="sub">Overview of your product data.</div></div>
     ${canEdit() ? `<button class="btn" id="newItem">+ New item</button>` : ""}</div>
     <div class="stats" id="stats">
-      ${["Items", "Released revs", "Change orders", "Vendors"].map((l) => `<div class="stat"><div class="ic">${ICON.items}</div><div class="n">—</div><div class="l">${l}</div></div>`).join("")}
+      ${["Items", "Released revs", "Change orders", "Vendors", "Avg ECO cycle"].map((l) => `<div class="stat"><div class="ic">${ICON.items}</div><div class="n">—</div><div class="l">${l}</div></div>`).join("")}
     </div>
     <div class="grid2" style="margin-top:18px">
       <div class="card"><div class="card-h">Recent change orders</div><div id="recentEco"></div></div>
@@ -133,8 +133,12 @@ async function viewDashboard() {
   if (canEdit()) $("#newItem").onclick = () => go("items");
   const [items, ecos, vendors] = await Promise.all([api("/items"), api("/ecos"), api("/vendors")]);
   const released = items.items.filter((i) => i.latest_status === "released").length;
-  const stat = (i, n, l, ic) => { const s = $("#stats").children[i]; s.querySelector(".n").textContent = fmt(n); s.querySelector(".l").textContent = l; s.querySelector(".ic").innerHTML = ICON[ic]; };
-  stat(0, items.items.length, "Items", "items"); stat(1, released, "Released revs", "eco"); stat(2, ecos.ecos.length, "Change orders", "eco"); stat(3, vendors.vendors.length, "Vendors", "vendors");
+  // average cycle time across released ECOs (released_at - submitted_at)
+  const done = ecos.ecos.filter((e) => e.status === "released" && e.submitted_at && e.released_at);
+  const avgMs = done.length ? done.reduce((a, e) => a + (new Date(e.released_at) - new Date(e.submitted_at)), 0) / done.length : null;
+  const stat = (i, n, l, ic) => { const s = $("#stats").children[i]; s.querySelector(".n").textContent = n; s.querySelector(".l").textContent = l; s.querySelector(".ic").innerHTML = ICON[ic]; };
+  stat(0, fmt(items.items.length), "Items", "items"); stat(1, fmt(released), "Released revs", "eco"); stat(2, fmt(ecos.ecos.length), "Change orders", "eco"); stat(3, fmt(vendors.vendors.length), "Vendors", "vendors");
+  stat(4, avgMs != null ? fmtDuration(avgMs) : "—", "Avg ECO cycle", "eco");
   $("#recentEco").innerHTML = ecos.ecos.length
     ? `<div class="tablewrap"><table><tbody>${ecos.ecos.slice(0, 6).map((e) => `<tr class="click" data-id="${e.id}"><td class="num">${esc(e.number)}</td><td>${esc(e.title)}</td><td style="text-align:right">${badge(e.status)}</td></tr>`).join("")}</tbody></table></div>`
     : `<div class="empty">No change orders yet.</div>`;
@@ -585,22 +589,34 @@ async function viewVendors() {
 
 // ---------------- SEARCH ----------------
 async function viewSearch() {
+  const modeName = (META.aiMode || "openai").toUpperCase();
   main().innerHTML = `<div class="page-h"><div><h2>AI Search</h2><div class="sub">Ask in plain English across parts and vendors.</div></div></div>
     <div class="card"><div class="card-b">
       <div class="searchbar"><input id="q" placeholder="e.g. released silicone tubing, or connectors in EA"><button class="btn" id="s_go">Search</button></div>
-      <div class="modehint">${META.aiEnabled ? `<span class="dot on"></span> AI interpretation on` : `<span class="dot off"></span> Keyword mode — set OPENAI_API_KEY to enable AI`}</div>
+      <div class="modehint">${META.aiEnabled
+        ? `<span class="dot on"></span> AI interpretation on · <b>${esc(modeName)}</b>${META.aiModel ? ` <span class="muted">(${esc(META.aiModel)})</span>` : ""}`
+        : `<span class="dot off"></span> Keyword mode — set <b>AI_MODE</b> + <b>AI_${esc(modeName)}_KEY</b> to enable AI`}</div>
     </div></div>
-    <div class="card"><div class="card-h">Results</div><div class="tablewrap" id="s_res"><div class="empty">Type a query above.</div></div></div>`;
+    <div class="card"><div class="card-h">Results</div><div class="card-b" id="s_res"><div class="empty">Type a query above.</div></div></div>`;
   const run = async () => {
     const q = $("#q").value.trim(); if (!q) return;
     $("#s_res").innerHTML = `<div class="empty">Searching…</div>`;
     try {
       const d = await api("/search?q=" + encodeURIComponent(q));
-      if (!d.results.length) { $("#s_res").innerHTML = `<div class="empty">No matches <span class="muted">(${d.mode} mode)</span>.</div>`; return; }
+      // exact AI error, surfaced at the top of Results
+      const errBox = d.aiError ? `<div class="ai-err"><b>AI error (${esc((d.aiMode || "").toUpperCase())}):</b> ${esc(d.aiError)}<div class="ai-err-sub">Showing keyword results below.</div></div>` : "";
+      const answer = d.answer ? `<div class="ai-answer">${esc(d.answer)}</div>` : "";
+      if (!d.results.length) {
+        $("#s_res").innerHTML = errBox + answer + `<div class="empty">No matches <span class="muted">(${esc(d.mode)} mode)</span>.</div>`;
+        return;
+      }
+      let table;
       if (d.entity === "vendors") {
-        $("#s_res").innerHTML = `<table><thead><tr><th>Code</th><th>Name</th><th>Contact</th></tr></thead><tbody>${d.results.map((v) => `<tr><td class="num">${esc(v.code)}</td><td>${esc(v.name)}</td><td class="muted">${esc(v.contact || "")}</td></tr>`).join("")}</tbody></table><div class="note">Vendor search · ${esc(d.mode)} mode.</div>`;
+        table = `<div class="tablewrap"><table><thead><tr><th>Code</th><th>Name</th><th>Contact</th></tr></thead><tbody>${d.results.map((v) => `<tr><td class="num">${esc(v.code)}</td><td>${esc(v.name)}</td><td class="muted">${esc(v.contact || "")}</td></tr>`).join("")}</tbody></table></div><div class="note">Vendor search · ${esc(d.mode)} mode.</div>`;
+        $("#s_res").innerHTML = errBox + answer + table;
       } else {
-        $("#s_res").innerHTML = `<table><thead><tr><th>Number</th><th>Name</th><th>UoM</th><th>Status</th></tr></thead><tbody>${d.results.map((i) => `<tr class="click" data-id="${i.id}"><td class="num">${esc(i.number)}</td><td>${esc(i.name)}</td><td class="muted">${esc(i.uom)}</td><td>${i.latest_status ? badge(i.latest_status) : "—"}</td></tr>`).join("")}</tbody></table><div class="note">${d.results.length} result(s) · ${esc(d.mode)} mode${d.mode === "ai" ? " — interpreted by the model" : ""}.</div>`;
+        table = `<div class="tablewrap"><table><thead><tr><th>Number</th><th>Name</th><th>Type</th><th>Lifecycle</th><th>UoM</th><th>Status</th></tr></thead><tbody>${d.results.map((i) => `<tr class="click" data-id="${i.id}"><td class="num">${esc(i.number)}</td><td>${esc(i.name)}</td><td>${i.latest_type ? typeBadge(i.latest_type) : "—"}</td><td>${i.latest_lifecycle ? lifeBadge(i.latest_lifecycle) : "—"}</td><td class="muted">${esc(i.uom)}</td><td>${i.latest_status ? badge(i.latest_status) : "—"}</td></tr>`).join("")}</tbody></table></div><div class="note">${d.results.length} result(s) · ${esc(d.mode)} mode.</div>`;
+        $("#s_res").innerHTML = errBox + answer + table;
         $("#s_res").querySelectorAll("tr.click").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.id));
       }
     } catch (e) { $("#s_res").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }

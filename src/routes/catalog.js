@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { query, one } from "../db.js";
 import { requireAuth } from "../auth.js";
-import { nlToFilter, aiEnabled } from "../lib/ai.js";
+import { nlToFilter, aiEnabled, aiConfig } from "../lib/ai.js";
 import { diffBom } from "../lib/bomdiff.js";
 
 const r = Router();
@@ -196,20 +196,43 @@ r.post("/vendor-parts", async (req, res) => {
 // ---------- SEARCH (AI natural language -> filter -> SQL, keyword fallback) ----------
 r.get("/search", async (req, res) => {
   const q = String(req.query.q || "").trim();
-  if (!q) return res.json({ results: [], entity: "items", mode: "empty", aiEnabled: aiEnabled() });
-  const f = await nlToFilter(q);
-  const like = "%" + (f.text || q).replace(/[%_]/g, "").trim() + "%";
-  if (f.entity === "vendors") {
-    const rows = await query("SELECT * FROM vendors WHERE company_id=$1 AND (name ILIKE $2 OR code ILIKE $2 OR contact ILIKE $2) ORDER BY code LIMIT 50", [co(req), like]);
-    return res.json({ results: rows, entity: "vendors", mode: f._mode, aiEnabled: aiEnabled() });
+  const cfg = aiConfig();
+  if (!q) return res.json({ results: [], entity: "items", mode: "empty", aiMode: cfg.mode, aiEnabled: cfg.enabled });
+
+  const ai = await nlToFilter(q);
+  const aiError = ai.error || null;
+  const f = ai.filter || { entity: "items", text: q, uom: null, status: null, answer: "" };
+  const mode = aiError ? cfg.mode + " · error" : (ai.enabled ? cfg.mode : "keyword");
+
+  // Tokenize the effective text into terms, lifting any status words into a filter.
+  // This makes "released silicone tubing" match (status=released) AND silicone AND tubing,
+  // so search works well even without an AI key.
+  const STATUS = { released: "released", working: "working", obsolete: "obsolete", draft: "working" };
+  const words = String(f.text || q).toLowerCase().split(/\s+/).filter(Boolean);
+  let status = f.status || null;
+  const terms = [];
+  for (const w of words) {
+    if (STATUS[w]) status = status || STATUS[w];
+    else terms.push(w.replace(/[%_]/g, ""));
   }
-  const params = [co(req), like];
-  let sql = `SELECT i.*, (SELECT status FROM item_revisions v WHERE v.item_id=i.id AND v.company_id=i.company_id ORDER BY v.id DESC LIMIT 1) AS latest_status
-             FROM items i WHERE i.company_id=$1 AND (i.number ILIKE $2 OR i.name ILIKE $2 OR i.description ILIKE $2)`;
+  if (!terms.length) terms.push(String(f.text || q).replace(/[%_]/g, "").trim());
+
+  const common = { entity: f.entity, mode, answer: aiError ? "" : (f.answer || ""), aiError, aiMode: cfg.mode, aiEnabled: cfg.enabled };
+  const params = [co(req)];
+  const termClause = (cols) => terms.map((t) => { params.push("%" + t + "%"); const p = "$" + params.length; return "(" + cols.map((c) => `${c} ILIKE ${p}`).join(" OR ") + ")"; }).join(" AND ");
+
+  if (f.entity === "vendors") {
+    let sql = `SELECT * FROM vendors WHERE company_id=$1 AND ${termClause(["name", "code", "contact"])} ORDER BY code LIMIT 50`;
+    return res.json({ results: await query(sql, params), ...common });
+  }
+  let sql = `SELECT i.*, lr.status AS latest_status, lr.lifecycle AS latest_lifecycle, lr.part_type AS latest_type
+             FROM items i
+             LEFT JOIN LATERAL (SELECT status, lifecycle, part_type FROM item_revisions v WHERE v.item_id=i.id AND v.company_id=i.company_id ORDER BY v.id DESC LIMIT 1) lr ON true
+             WHERE i.company_id=$1 AND ${termClause(["i.number", "i.name", "i.description"])}`;
   if (f.uom) { params.push(f.uom); sql += ` AND i.uom=$${params.length}`; }
-  if (f.status) { params.push(f.status); sql += ` AND EXISTS (SELECT 1 FROM item_revisions v WHERE v.item_id=i.id AND v.company_id=i.company_id AND v.status=$${params.length})`; }
+  if (status) { params.push(status); sql += ` AND lr.status=$${params.length}`; }
   sql += " ORDER BY i.number LIMIT 50";
-  res.json({ results: await query(sql, params), entity: "items", mode: f._mode, aiEnabled: aiEnabled() });
+  res.json({ results: await query(sql, params), ...common });
 });
 
 export default r;

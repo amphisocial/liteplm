@@ -9,7 +9,7 @@ import account from "./routes/account.js";
 import catalog from "./routes/catalog.js";
 import eco from "./routes/eco.js";
 import adminImport from "./routes/admin-import.js";
-import { aiEnabled } from "./lib/ai.js";
+import { aiEnabled, aiConfig } from "./lib/ai.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,8 +18,8 @@ app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 app.use(resolveCtx);
 
-app.get("/healthz", (_req, res) => res.json({ ok: true, service: "lite-plm", ai: aiEnabled() }));
-app.get("/api/meta", (_req, res) => res.json({ aiEnabled: aiEnabled() }));
+app.get("/healthz", (_req, res) => { const a = aiConfig(); res.json({ ok: true, service: "lite-plm", aiMode: a.mode, aiEnabled: a.enabled }); });
+app.get("/api/meta", (_req, res) => { const a = aiConfig(); res.json({ aiMode: a.mode, aiEnabled: a.enabled, aiModel: a.model }); });
 
 app.use("/api", account);
 app.use("/api", catalog);
