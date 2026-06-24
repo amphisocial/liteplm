@@ -167,3 +167,22 @@ td.num{font-family:var(--mono);font-size:12.5px;color:var(--teal-d);font-weight:
 @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- modal ---------- */
+.modal-bg{position:fixed;inset:0;background:rgba(14,31,46,.45);backdrop-filter:blur(2px);display:grid;place-items:center;z-index:80;padding:20px;animation:fade .15s}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);width:100%;max-width:440px;overflow:hidden;animation:pop .16s}
+@keyframes pop{from{transform:translateY(8px);opacity:.5}to{transform:none;opacity:1}}
+.modal-h{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.modal-h b{font-size:15px}
+.modal-x{cursor:pointer;color:var(--muted);font-size:22px;line-height:1;background:none;border:none;padding:0 4px}
+.modal-x:hover{color:var(--ink)}
+.modal-b{padding:6px 18px 18px}
+.proprow{display:flex;justify-content:space-between;gap:18px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.proprow:last-child{border-bottom:none}
+.proprow .k{color:var(--muted)}
+.proprow .v{font-weight:600;text-align:right}
+.proprow .v.mono{font-family:var(--mono)}
+tr.active td{background:var(--teal-soft)!important;box-shadow:inset 3px 0 0 var(--teal)}
+.linklike{color:var(--teal-d);cursor:pointer;font-weight:500}
+.linklike:hover{text-decoration:underline}

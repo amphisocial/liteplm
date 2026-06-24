@@ -37,15 +37,30 @@ r.get("/items/:id", async (req, res) => {
   const item = await one("SELECT * FROM items WHERE id=$1 AND company_id=$2", [req.params.id, co(req)]);
   if (!item) return res.status(404).json({ error: "Item not found." });
   const revs = await query("SELECT * FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id", [item.id, co(req)]);
-  const vparts = await query(
-    "SELECT vp.*, v.name AS vendor_name, v.code AS vendor_code FROM vendor_parts vp JOIN vendors v ON v.id=vp.vendor_id WHERE vp.item_id=$1 AND vp.company_id=$2",
-    [item.id, co(req)]);
+  res.json({ item, revisions: revs });
+});
+
+// Everything that is focused on ONE revision: its BOM, where it is used, its vendor parts.
+r.get("/revisions/:revId/focus", async (req, res) => {
+  const rev = await one(
+    "SELECT iv.*, i.number, i.name, i.description, i.uom FROM item_revisions iv JOIN items i ON i.id=iv.item_id WHERE iv.id=$1 AND iv.company_id=$2",
+    [req.params.revId, co(req)]);
+  if (!rev) return res.status(404).json({ error: "Revision not found." });
+  const bom = await query(
+    `SELECT b.*, ci.number AS child_number, ci.name AS child_name, ci.uom AS child_uom, cv.rev AS child_rev
+       FROM bom_lines b JOIN items ci ON ci.id=b.child_item_id
+       LEFT JOIN item_revisions cv ON cv.id=b.child_rev_id
+     WHERE b.parent_rev_id=$1 AND b.company_id=$2 ORDER BY b.id`, [rev.id, co(req)]);
+  // where used: parents whose BOM references THIS revision specifically
   const whereUsed = await query(
-    `SELECT DISTINCT pi.id, pi.number, pi.name, pr.rev FROM bom_lines b
-       JOIN item_revisions pr ON pr.id=b.parent_rev_id
-       JOIN items pi ON pi.id=pr.item_id
-     WHERE b.child_item_id=$1 AND b.company_id=$2`, [item.id, co(req)]);
-  res.json({ item, revisions: revs, vendorParts: vparts, whereUsed });
+    `SELECT DISTINCT pi.id AS item_id, pi.number, pi.name, pr.rev AS parent_rev, pr.id AS parent_rev_id, b.qty
+       FROM bom_lines b JOIN item_revisions pr ON pr.id=b.parent_rev_id JOIN items pi ON pi.id=pr.item_id
+     WHERE b.child_rev_id=$1 AND b.company_id=$2 ORDER BY pi.number`, [rev.id, co(req)]);
+  const vendorParts = await query(
+    `SELECT vp.*, v.name AS vendor_name, v.code AS vendor_code, v.contact AS vendor_contact
+       FROM vendor_parts vp JOIN vendors v ON v.id=vp.vendor_id
+     WHERE vp.item_revision_id=$1 AND vp.company_id=$2 ORDER BY v.code`, [rev.id, co(req)]);
+  res.json({ revision: rev, bom, whereUsed, vendorParts });
 });
 
 // Revise: create a new WORKING copy from the latest released/working rev (next letter).
@@ -59,8 +74,8 @@ r.post("/items/:id/revise", async (req, res) => {
   const rev = await one("INSERT INTO item_revisions (company_id, item_id, rev, status) VALUES ($1,$2,$3,'working') RETURNING *", [co(req), item.id, nextRev]);
   // carry the BOM forward into the new working rev
   if (last) {
-    await query(`INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, qty, ref_des)
-                 SELECT company_id, $1, child_item_id, qty, ref_des FROM bom_lines WHERE parent_rev_id=$2 AND company_id=$3`,
+    await query(`INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, child_rev_id, qty, ref_des)
+                 SELECT company_id, $1, child_item_id, child_rev_id, qty, ref_des FROM bom_lines WHERE parent_rev_id=$2 AND company_id=$3`,
       [rev.id, last.id, co(req)]);
   }
   res.json({ revision: rev });
@@ -86,8 +101,9 @@ r.post("/revisions/:revId/bom", async (req, res) => {
   const child = await one("SELECT * FROM items WHERE number=$1 AND company_id=$2", [String(childNumber || "").trim(), co(req)]);
   if (!child) return res.status(404).json({ error: `No item with number "${childNumber}".` });
   if (child.id === rev.item_id) return res.status(400).json({ error: "An item can't contain itself." });
-  const line = await one("INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, qty, ref_des) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-    [co(req), rev.id, child.id, Number(qty) || 1, refDes || ""]);
+  const childRev = await one("SELECT id FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id DESC LIMIT 1", [child.id, co(req)]);
+  const line = await one("INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, child_rev_id, qty, ref_des) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [co(req), rev.id, child.id, childRev ? childRev.id : null, Number(qty) || 1, refDes || ""]);
   res.json({ line });
 });
 
@@ -122,9 +138,10 @@ r.post("/vendor-parts", async (req, res) => {
   if (!item) return res.status(404).json({ error: `No item with number "${itemNumber}".` });
   const vendor = await one("SELECT * FROM vendors WHERE id=$1 AND company_id=$2", [vendorId, co(req)]);
   if (!vendor) return res.status(404).json({ error: "Vendor not found." });
+  const rev = await one("SELECT id FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id DESC LIMIT 1", [item.id, co(req)]);
   res.json({ vendorPart: await one(
-    "INSERT INTO vendor_parts (company_id, vendor_id, item_id, vendor_part_number, price) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-    [co(req), vendor.id, item.id, String(vendorPartNumber || "").trim(), Number(price) || 0]) });
+    "INSERT INTO vendor_parts (company_id, vendor_id, item_id, item_revision_id, vendor_part_number, price) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [co(req), vendor.id, item.id, rev ? rev.id : null, String(vendorPartNumber || "").trim(), Number(price) || 0]) });
 });
 
 // ---------- SEARCH (AI natural language -> filter -> SQL, keyword fallback) ----------

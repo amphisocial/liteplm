@@ -179,34 +179,45 @@ async function viewItems() {
   });
 }
 
-async function itemDetail(id) {
+async function itemDetail(id, focusRevId) {
   const d = await api("/items/" + id);
-  const latest = d.revisions[d.revisions.length - 1];
+  const revs = d.revisions;
+  if (!revs.length) { toast("Item has no revisions.", "bad"); return; }
+  const focus = (focusRevId && revs.find((r) => String(r.id) === String(focusRevId))) || revs[revs.length - 1];
+  const f = await api("/revisions/" + focus.id + "/focus");
+
   main().innerHTML = `<span class="back" id="back">← Items</span>
-    <div class="page-h"><div><h2 class="mono" style="font-size:20px">${esc(d.item.number)}</h2><div class="sub">${esc(d.item.name)} ${d.item.uom ? "· " + esc(d.item.uom) : ""}</div></div>
+    <div class="page-h"><div>
+      <h2 class="mono" style="font-size:21px">${esc(d.item.number)} <span class="badge b-${esc(focus.status)}" style="font-size:11.5px;vertical-align:middle;margin-left:4px">Rev ${esc(focus.rev)} · ${esc(focus.status).replace("_", " ")}</span></h2>
+      <div class="sub">${esc(d.item.name)}${d.item.description ? " — " + esc(d.item.description) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div></div>
       ${canEdit() ? `<button class="btn ghost" id="revise">Revise → new working copy</button>` : ""}</div>
     <div class="grid2">
-      <div class="card"><div class="card-h">Revisions</div><div class="tablewrap"><table><thead><tr><th>Rev</th><th>Status</th><th>Released</th></tr></thead><tbody>
-        ${d.revisions.map((r) => `<tr><td class="mono">${esc(r.rev)}</td><td>${badge(r.status)}</td><td class="muted">${r.released_at ? new Date(r.released_at).toLocaleDateString() : "—"}</td></tr>`).join("")}
+      <div class="card"><div class="card-h"><span>Revisions</span><span class="hint">click a row to focus</span></div><div class="tablewrap"><table><thead><tr><th>Rev</th><th>Status</th><th>Released</th></tr></thead><tbody>
+        ${revs.map((r) => `<tr class="click rev-row ${String(r.id) === String(focus.id) ? "active" : ""}" data-rev="${r.id}"><td class="mono">${esc(r.rev)}</td><td>${badge(r.status)}</td><td class="muted">${r.released_at ? new Date(r.released_at).toLocaleDateString() : "—"}</td></tr>`).join("")}
         </tbody></table></div></div>
-      <div class="card"><div class="card-h">Where used</div>
-        ${d.whereUsed.length ? `<div class="tablewrap"><table><tbody>${d.whereUsed.map((w) => `<tr><td class="num">${esc(w.number)}</td><td>${esc(w.name)}</td><td class="mono muted">rev ${esc(w.rev)}</td></tr>`).join("")}</tbody></table></div>`
-          : `<div class="empty">Not used in any BOM.</div>`}</div>
+      <div class="card"><div class="card-h">Where used <span class="hint">rev ${esc(focus.rev)}</span></div>
+        ${f.whereUsed.length ? `<div class="tablewrap"><table><thead><tr><th>Assembly</th><th>Name</th><th>Uses rev</th><th>Qty</th></tr></thead><tbody>
+          ${f.whereUsed.map((w) => `<tr class="click wu-row" data-item="${w.item_id}"><td class="num">${esc(w.number)}</td><td>${esc(w.name)}</td><td class="mono muted">${esc(w.parent_rev)}</td><td>${esc(w.qty)}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty">Not used in any BOM at this revision.</div>`}</div>
     </div>
-    <div class="card"><div class="card-h"><span>BOM — rev ${esc(latest.rev)}</span> ${badge(latest.status)}</div><div class="card-b" id="bomwrap"></div></div>
-    <div class="card"><div class="card-h">Vendor parts</div><div id="vpwrap"></div></div>`;
+    <div class="card"><div class="card-h"><span>BOM</span><span class="hint">rev ${esc(focus.rev)} · ${badge(focus.status)}</span></div><div class="card-b" id="bomwrap"></div></div>
+    <div class="card"><div class="card-h">Vendor parts <span class="hint">rev ${esc(focus.rev)}</span></div><div id="vpwrap"></div></div>`;
+
   $("#back").onclick = viewItems;
-  if (canEdit()) $("#revise").onclick = async () => { try { const r = await api("/items/" + id + "/revise", { method: "POST" }); toast("Created working rev " + r.revision.rev + "."); itemDetail(id); } catch (e) { toast(e.message, "bad"); } };
-  renderBom(latest, id);
-  renderVendorParts(d.vendorParts);
+  if (canEdit()) $("#revise").onclick = async () => { try { const r = await api("/items/" + id + "/revise", { method: "POST" }); toast("Created working rev " + r.revision.rev + "."); itemDetail(id, r.revision.id); } catch (e) { toast(e.message, "bad"); } };
+  // revision focus
+  $("#main").querySelectorAll(".rev-row").forEach((tr) => tr.onclick = () => itemDetail(id, tr.dataset.rev));
+  // where-used -> open that assembly
+  $("#main").querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
+  renderBom(focus, id, f.bom);
+  renderVendorParts(f.vendorParts, d.item, focus);
 }
 
-async function renderBom(rev, itemId) {
-  const { lines } = await api("/revisions/" + rev.id + "/bom");
+function renderBom(rev, itemId, lines) {
   const editable = canEdit() && rev.status !== "released";
   $("#bomwrap").innerHTML = `
-    ${lines.length ? `<div class="tablewrap"><table><thead><tr><th>Child</th><th>Name</th><th>Qty</th><th>Ref des</th>${editable ? "<th></th>" : ""}</tr></thead><tbody>
-      ${lines.map((l) => `<tr><td class="num">${esc(l.child_number)}</td><td>${esc(l.child_name)}</td><td>${esc(l.qty)}</td><td class="muted">${esc(l.ref_des || "")}</td>
+    ${lines.length ? `<div class="tablewrap"><table><thead><tr><th>Child</th><th>Name</th><th>Child rev</th><th>Qty</th><th>Ref des</th>${editable ? "<th></th>" : ""}</tr></thead><tbody>
+      ${lines.map((l) => `<tr><td class="num click bomchild" data-num="${esc(l.child_number)}">${esc(l.child_number)}</td><td>${esc(l.child_name)}</td><td class="mono muted">${esc(l.child_rev || "—")}</td><td>${esc(l.qty)}</td><td class="muted">${esc(l.ref_des || "")}</td>
         ${editable ? `<td style="text-align:right"><button class="btn danger sm" data-del="${l.id}">remove</button></td>` : ""}</tr>`).join("")}
     </tbody></table></div>` : `<div class="empty">No components on this revision.</div>`}
     ${editable ? `<div class="inline-form" style="margin-top:14px">
@@ -215,16 +226,46 @@ async function renderBom(rev, itemId) {
       <div class="field"><label>Ref des</label><input id="b_ref" placeholder="R1, R2"></div>
       <button class="btn" id="b_add">Add component</button></div>`
     : rev.status === "released" ? `<div class="note">This revision is released and locked. Use “Revise” to make changes.</div>` : ""}`;
+  // clicking a child part number navigates to that child item
+  $("#bomwrap").querySelectorAll(".bomchild").forEach((td) => td.onclick = async () => {
+    try { const items = ITEMS_CACHE.length ? ITEMS_CACHE : (await api("/items")).items; const it = items.find((x) => x.number === td.dataset.num); if (it) itemDetail(it.id); } catch (_) {}
+  });
   if (editable) {
-    $("#b_add").onclick = async () => { try { await api("/revisions/" + rev.id + "/bom", { method: "POST", body: { childNumber: $("#b_child").value, qty: $("#b_qty").value, refDes: $("#b_ref").value } }); renderBom(rev, itemId); } catch (e) { toast(e.message, "bad"); } };
-    $("#bomwrap").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { try { await api("/bom/" + b.dataset.del, { method: "DELETE" }); renderBom(rev, itemId); } catch (e) { toast(e.message, "bad"); } });
+    $("#b_add").onclick = async () => { try { await api("/revisions/" + rev.id + "/bom", { method: "POST", body: { childNumber: $("#b_child").value, qty: $("#b_qty").value, refDes: $("#b_ref").value } }); itemDetail(itemId, rev.id); } catch (e) { toast(e.message, "bad"); } };
+    $("#bomwrap").querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => { try { await api("/bom/" + b.dataset.del, { method: "DELETE" }); itemDetail(itemId, rev.id); } catch (e) { toast(e.message, "bad"); } });
   }
 }
-function renderVendorParts(vps) {
+
+function renderVendorParts(vps, item, rev) {
   $("#vpwrap").innerHTML = vps.length ? `<div class="tablewrap"><table><thead><tr><th>Vendor</th><th>Vendor P/N</th><th>Price</th></tr></thead><tbody>
-    ${vps.map((v) => `<tr><td>${esc(v.vendor_code)} — ${esc(v.vendor_name)}</td><td class="num">${esc(v.vendor_part_number)}</td><td class="mono">$${esc(v.price)}</td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="empty">No vendor parts linked.</div>`;
+    ${vps.map((v, i) => `<tr><td>${esc(v.vendor_code)} — ${esc(v.vendor_name)}</td><td><span class="num linklike vp-open" data-i="${i}">${esc(v.vendor_part_number)}</span></td><td class="mono">$${esc(v.price)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">No vendor parts at this revision.</div>`;
+  $("#vpwrap").querySelectorAll(".vp-open").forEach((el) => el.onclick = () => vendorPartModal(vps[+el.dataset.i], item, rev));
 }
+
+// ---- modal helpers ----
+function openModal(title, bodyHtml) {
+  closeModal();
+  const bg = document.createElement("div"); bg.className = "modal-bg"; bg.id = "modalBg";
+  bg.innerHTML = `<div class="modal"><div class="modal-h"><b>${title}</b><button class="modal-x" id="modalX">×</button></div><div class="modal-b">${bodyHtml}</div></div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener("click", (e) => { if (e.target === bg) closeModal(); });
+  $("#modalX").onclick = closeModal;
+  document.addEventListener("keydown", escClose);
+}
+function escClose(e) { if (e.key === "Escape") closeModal(); }
+function closeModal() { const m = $("#modalBg"); if (m) m.remove(); document.removeEventListener("keydown", escClose); }
+function vendorPartModal(vp, item, rev) {
+  const row = (k, v, mono) => `<div class="proprow"><span class="k">${k}</span><span class="v ${mono ? "mono" : ""}">${esc(v)}</span></div>`;
+  openModal("Vendor part", `
+    ${row("Vendor P/N", vp.vendor_part_number, true)}
+    ${row("Vendor", vp.vendor_code + " — " + vp.vendor_name)}
+    ${row("Unit price", "$" + vp.price, true)}
+    ${row("For item", item.number, true)}
+    ${row("Item revision", "Rev " + rev.rev, true)}
+    ${vp.vendor_contact ? row("Vendor contact", vp.vendor_contact) : ""}`);
+}
+
 
 // ---------------- ECOs ----------------
 async function viewEcos() {

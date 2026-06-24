@@ -69,9 +69,11 @@ async function runImport(companyId, files) {
       return [companyId, id, x.rev.trim(), status, released];
     });
     const revRows = (await client.query(
-      "SELECT iv.id, iv.rev, iv.item_id, i.number FROM item_revisions iv JOIN items i ON i.id=iv.item_id WHERE iv.company_id=$1", [companyId]
+      "SELECT iv.id, iv.rev, iv.item_id, i.number FROM item_revisions iv JOIN items i ON i.id=iv.item_id WHERE iv.company_id=$1 ORDER BY iv.id", [companyId]
     )).rows;
     const revByKey = new Map(revRows.map((v) => [v.number + "||" + v.rev, v.id]));
+    const latestRevByItem = new Map();
+    for (const v of revRows) latestRevByItem.set(v.number, v.id); // ordered by id => last wins = latest
 
     // vendors
     await bulkInsert(client, "vendors", ["company_id", "code", "name", "contact"], vendors, (x) => {
@@ -81,20 +83,24 @@ async function runImport(companyId, files) {
     const vendorRows = (await client.query("SELECT id, code FROM vendors WHERE company_id=$1", [companyId])).rows;
     const vendorByCode = new Map(vendorRows.map((v) => [v.code, v.id]));
 
-    // vendor parts
-    await bulkInsert(client, "vendor_parts", ["company_id", "vendor_id", "item_id", "vendor_part_number", "price"], vendorParts, (x) => {
+    // vendor parts (revision-scoped: item_rev column, falls back to latest rev)
+    await bulkInsert(client, "vendor_parts", ["company_id", "vendor_id", "item_id", "item_revision_id", "vendor_part_number", "price"], vendorParts, (x) => {
       const vid = vendorByCode.get((x.vendor_code || "").trim());
-      const iid = itemByNum.get((x.item_number || "").trim());
+      const num = (x.item_number || "").trim();
+      const iid = itemByNum.get(num);
       if (!vid || !iid) return null;
-      return [companyId, vid, iid, (x.vendor_part_number || "").trim(), Number(x.price) || 0];
+      const rid = revByKey.get(num + "||" + (x.item_rev || "").trim()) || latestRevByItem.get(num) || null;
+      return [companyId, vid, iid, rid, (x.vendor_part_number || "").trim(), Number(x.price) || 0];
     });
 
-    // bom lines (parent rev + child item)
-    await bulkInsert(client, "bom_lines", ["company_id", "parent_rev_id", "child_item_id", "qty", "ref_des"], boms, (x) => {
+    // bom lines (parent rev + child item + the child's specific rev)
+    await bulkInsert(client, "bom_lines", ["company_id", "parent_rev_id", "child_item_id", "child_rev_id", "qty", "ref_des"], boms, (x) => {
       const pr = revByKey.get((x.parent_number || "").trim() + "||" + (x.parent_rev || "").trim());
-      const ci = itemByNum.get((x.child_number || "").trim());
+      const childNum = (x.child_number || "").trim();
+      const ci = itemByNum.get(childNum);
       if (!pr || !ci) return null;
-      return [companyId, pr, ci, Number(x.qty) || 1, x.ref_des || ""];
+      const cr = revByKey.get(childNum + "||" + (x.child_rev || "").trim()) || latestRevByItem.get(childNum) || null;
+      return [companyId, pr, ci, cr, Number(x.qty) || 1, x.ref_des || ""];
     });
 
     await client.query("COMMIT");

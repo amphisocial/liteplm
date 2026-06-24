@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS bom_lines (
   company_id     BIGINT NOT NULL REFERENCES companies(id),
   parent_rev_id  BIGINT NOT NULL REFERENCES item_revisions(id),
   child_item_id  BIGINT NOT NULL REFERENCES items(id),
+  child_rev_id   BIGINT REFERENCES item_revisions(id),
   qty            NUMERIC NOT NULL DEFAULT 1,
   ref_des        TEXT DEFAULT '',
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -81,7 +82,8 @@ CREATE TABLE IF NOT EXISTS vendor_parts (
   id                  BIGSERIAL PRIMARY KEY,
   company_id          BIGINT NOT NULL REFERENCES companies(id),
   vendor_id           BIGINT NOT NULL REFERENCES vendors(id),
-  item_id             BIGINT NOT NULL REFERENCES items(id),
+  item_id             BIGINT REFERENCES items(id),
+  item_revision_id    BIGINT REFERENCES item_revisions(id),
   vendor_part_number  TEXT NOT NULL,
   price               NUMERIC DEFAULT 0
 );
@@ -132,3 +134,10 @@ CREATE INDEX IF NOT EXISTS idx_revs_item    ON item_revisions(company_id, item_i
 CREATE INDEX IF NOT EXISTS idx_bom_parent   ON bom_lines(company_id, parent_rev_id);
 CREATE INDEX IF NOT EXISTS idx_bom_child    ON bom_lines(company_id, child_item_id);
 CREATE INDEX IF NOT EXISTS idx_ecos_co      ON ecos(company_id);
+
+-- migrations for already-deployed databases (no-ops on a fresh schema)
+ALTER TABLE vendor_parts ALTER COLUMN item_id DROP NOT NULL;
+ALTER TABLE vendor_parts ADD COLUMN IF NOT EXISTS item_revision_id BIGINT REFERENCES item_revisions(id);
+ALTER TABLE bom_lines    ADD COLUMN IF NOT EXISTS child_rev_id BIGINT REFERENCES item_revisions(id);
+CREATE INDEX IF NOT EXISTS idx_bom_childrev ON bom_lines(company_id, child_rev_id);
+CREATE INDEX IF NOT EXISTS idx_vp_rev       ON vendor_parts(company_id, item_revision_id);
