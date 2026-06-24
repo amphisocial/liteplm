@@ -197,18 +197,23 @@ async function itemDetail(id, focusRevId) {
   const focus = (focusRevId && revs.find((r) => String(r.id) === String(focusRevId))) || revs[revs.length - 1];
   const f = await api("/revisions/" + focus.id + "/focus");
   const editableRev = canEdit() && focus.status !== "released";
+  const latest = revs[revs.length - 1];
+  const descShown = (focus.description && focus.description.trim()) ? focus.description : (d.item.description || "");
 
   main().innerHTML = `<span class="back" id="back">← Items</span>
     <div class="page-h"><div>
       <h2 class="mono" style="font-size:21px">${esc(d.item.number)}
         <span class="badge b-${esc(focus.status)}" style="font-size:11.5px;vertical-align:middle;margin-left:4px">Rev ${esc(focus.rev)} · ${esc(focus.status).replace("_", " ")}</span>
         ${typeBadge(focus.part_type)} ${lifeBadge(focus.lifecycle)}</h2>
-      <div class="sub">${esc(d.item.name)}${d.item.description ? " — " + esc(d.item.description) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div></div>
-      ${canEdit() ? `<button class="btn ghost" id="revise">Revise → new working copy</button>` : ""}</div>
-    ${editableRev ? `<div class="card"><div class="card-b" style="display:flex;gap:14px;align-items:end;flex-wrap:wrap">
-      <div class="field" style="margin:0;max-width:160px"><label>Type (rev ${esc(focus.rev)})</label><select id="ed_type">${["Make","Buy"].map((t)=>`<option ${t===focus.part_type?"selected":""}>${t}</option>`).join("")}</select></div>
-      <div class="field" style="margin:0;max-width:180px"><label>Lifecycle (rev ${esc(focus.rev)})</label><select id="ed_life">${["Prototype","Preproduction","Production"].map((t)=>`<option ${t===focus.lifecycle?"selected":""}>${t}</option>`).join("")}</select></div>
-      <button class="btn sm" id="ed_save">Save attributes</button></div></div>` : ""}
+      <div class="sub">${esc(d.item.name)}${descShown ? " — " + esc(descShown) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div></div>
+      ${canEdit() ? `<div class="btnrow"><button class="btn ghost" id="revise">Revise</button><button class="btn" id="release">Release → ECO</button></div>` : ""}</div>
+    ${editableRev ? `<div class="card"><div class="card-h"><span>Edit working revision ${esc(focus.rev)}</span></div><div class="card-b">
+      <div class="kvgrid">
+        <div class="field" style="margin:0"><label>Type</label><select id="ed_type">${["Make","Buy"].map((t)=>`<option ${t===focus.part_type?"selected":""}>${t}</option>`).join("")}</select></div>
+        <div class="field" style="margin:0"><label>Lifecycle</label><select id="ed_life">${["Prototype","Preproduction","Production"].map((t)=>`<option ${t===focus.lifecycle?"selected":""}>${t}</option>`).join("")}</select></div>
+        <div class="field" style="margin:0;grid-column:1 / -1"><label>Description</label><input id="ed_desc" value="${esc(focus.description||"")}" placeholder="${esc(d.item.description||"")}"></div>
+      </div>
+      <button class="btn sm" id="ed_save" style="margin-top:12px">Save changes</button></div></div>` : ""}
     <div class="grid2">
       <div class="card"><div class="card-h"><span>Revisions</span>
         <div class="cmpbar"><span class="sel" id="cmpsel">select 2 to compare</span><button class="btn sm" id="cmpbtn" disabled>Compare</button></div></div>
@@ -227,8 +232,18 @@ async function itemDetail(id, focusRevId) {
     <div class="card"><div class="card-h">Vendor parts <span class="hint">rev ${esc(focus.rev)}</span></div><div id="vpwrap"></div></div>`;
 
   $("#back").onclick = viewItems;
-  if (canEdit()) $("#revise").onclick = async () => { try { const r = await api("/items/" + id + "/revise", { method: "POST" }); toast("Created working rev " + r.revision.rev + "."); itemDetail(id, r.revision.id); } catch (e) { toast(e.message, "bad"); } };
-  if (editableRev) $("#ed_save").onclick = async () => { try { await api("/revisions/" + focus.id, { method: "PATCH", body: { partType: $("#ed_type").value, lifecycle: $("#ed_life").value } }); toast("Attributes updated."); itemDetail(id, focus.id); } catch (e) { toast(e.message, "bad"); } };
+  if (canEdit()) {
+    $("#revise").onclick = async () => {
+      if (latest.status !== "released") { toast(`Rev ${latest.rev} is still working — send it through Release → ECO to release it first.`, "bad"); return; }
+      try { const r = await api("/items/" + id + "/revise", { method: "POST" }); toast("Created working rev " + r.revision.rev + "."); itemDetail(id, r.revision.id); } catch (e) { toast(e.message, "bad"); }
+    };
+    $("#release").onclick = () => {
+      const work = revs.filter((r) => r.status === "working").pop();
+      if (!work) { toast("No working revision to release. Click Revise to create one.", "bad"); return; }
+      viewReleaseForm(work.id);
+    };
+  }
+  if (editableRev) $("#ed_save").onclick = async () => { try { await api("/revisions/" + focus.id, { method: "PATCH", body: { partType: $("#ed_type").value, lifecycle: $("#ed_life").value, description: $("#ed_desc").value } }); toast("Revision updated."); itemDetail(id, focus.id); } catch (e) { toast(e.message, "bad"); } };
   // revision focus (ignore clicks originating on the checkbox)
   $("#main").querySelectorAll(".rev-row").forEach((tr) => tr.onclick = (e) => { if (e.target.classList.contains("cmp-ck")) return; itemDetail(id, tr.dataset.rev); });
   $("#main").querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
@@ -339,71 +354,143 @@ async function ecoCompareModal(ecoId) {
 
 // ---------------- ECOs ----------------
 async function viewEcos() {
-  main().innerHTML = `<div class="page-h"><div><h2>Engineering Change Orders</h2><div class="sub">Route changes through approval; release on implement.</div></div>
+  main().innerHTML = `<div class="page-h"><div><h2>Engineering Change Orders</h2><div class="sub">Route changes through approval; affected revisions release when the ECO releases.</div></div>
     ${canEdit() ? `<button class="btn" id="e_new">+ New ECO</button>` : ""}</div>
-    ${canEdit() ? `<div class="card" id="e_form" style="display:none"><div class="card-h">New ECO</div><div class="card-b"><div class="inline-form">
-      <div class="field"><label>Number</label><input id="e_num" placeholder="ECO-1042"></div>
-      <div class="field"><label>Title</label><input id="e_title" placeholder="Update tubing durometer"></div>
-      <button class="btn" id="e_add">Create ECO</button></div></div></div>` : ""}
     <div class="card"><div class="card-h">All ECOs</div><div class="tablewrap" id="e_list"></div></div>`;
-  if (canEdit()) {
-    $("#e_new").onclick = () => { const f = $("#e_form"); f.style.display = f.style.display === "none" ? "" : "none"; };
-    $("#e_add").onclick = async () => { try { const r = await api("/ecos", { method: "POST", body: { number: $("#e_num").value, title: $("#e_title").value } }); toast("ECO created."); ecoDetail(r.eco.id); } catch (e) { toast(e.message, "bad"); } };
-  }
+  if (canEdit()) $("#e_new").onclick = () => viewReleaseForm();
   const { ecos } = await api("/ecos");
-  $("#e_list").innerHTML = ecos.length ? `<table><thead><tr><th>Number</th><th>Title</th><th>Status</th></tr></thead><tbody>
-    ${ecos.map((e) => `<tr class="click" data-id="${e.id}"><td class="num">${esc(e.number)}</td><td>${esc(e.title)}</td><td>${badge(e.status)}</td></tr>`).join("")}
+  $("#e_list").innerHTML = ecos.length ? `<table><thead><tr><th>Number</th><th>Title</th><th>Reason</th><th>Impact</th><th>Status</th></tr></thead><tbody>
+    ${ecos.map((e) => `<tr class="click" data-id="${e.id}"><td class="num">${esc(e.number)}</td><td>${esc(e.title)}</td><td class="muted">${esc(e.reason || "—")}</td>
+      <td>${e.impact_class === "Class 2" ? '<span class="ic-class2">Class 2</span>' : '<span class="ic-class1">Class 1</span>'}</td><td>${badge(e.status)}</td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No change orders yet.</div>`;
   $("#e_list").querySelectorAll("tr.click").forEach((tr) => tr.onclick = () => ecoDetail(tr.dataset.id));
+}
+
+// ---------------- RELEASE → ECO form ----------------
+const REASONS = ["supplier obsolescence", "design flaw", "cost reduction", "documentation", "other"];
+async function viewReleaseForm(seedRevId) {
+  const { ecos } = await api("/ecos");
+  const nextNum = "ECO-" + (1000 + ecos.length + 1);
+  const affected = []; // {revId, number, rev, disposition, effDate, effUnit, effBatch}
+  const addRev = async (revId) => {
+    if (affected.some((a) => String(a.revId) === String(revId))) return;
+    const fr = await api("/revisions/" + revId + "/focus");
+    if (fr.revision.status !== "working") { toast(`Rev ${fr.revision.rev} of ${fr.revision.number} isn't working.`, "bad"); return; }
+    affected.push({ revId, number: fr.revision.number, rev: fr.revision.rev, disposition: "Use As Is", effDate: "", effUnit: "", effBatch: "" });
+  };
+  if (seedRevId) await addRev(seedRevId);
+
+  const render = () => {
+    main().innerHTML = `<span class="back" id="back">← Change Orders</span>
+      <div class="page-h"><div><h2>Release → ECO</h2><div class="sub">Mass-release working revisions through a change order.</div></div></div>
+      <div class="card"><div class="card-h">Change order</div><div class="card-b">
+        <div class="kvgrid">
+          <div class="field" style="margin:0"><label>ECO number</label><input id="r_num" value="${esc(nextNum)}"></div>
+          <div class="field" style="margin:0"><label>Title</label><input id="r_title" placeholder="Release bracket update"></div>
+        </div>
+        <div class="field" style="margin:12px 0 0"><label>Description of change</label><textarea id="r_desc" rows="2" placeholder="What is changing and why"></textarea></div>
+        <div class="kvgrid" style="margin-top:12px">
+          <div class="field" style="margin:0"><label>Reason for change</label><select id="r_reason">${REASONS.map((x)=>`<option>${x}</option>`).join("")}</select></div>
+          <div class="field" style="margin:0"><label>Impact classification</label><select id="r_class"><option value="Class 1">Class 1 — Major (full CCB review)</option><option value="Class 2">Class 2 — Minor (expedited)</option></select></div>
+        </div>
+        <div class="note" id="r_classnote"></div>
+      </div></div>
+
+      <div class="card"><div class="card-h"><span>Affected items</span><span class="hint">working revisions to release</span></div><div class="card-b">
+        <div id="r_aff"></div>
+        <div class="inline-form" style="margin-top:12px">
+          <div class="field" style="margin:0"><label>Add part (item number)</label><input id="r_addnum" placeholder="FG-1000"></div>
+          <button class="btn ghost" id="r_add">Add working revision</button>
+        </div>
+      </div></div>
+      <div class="btnrow"><button class="btn" id="r_submit">Submit for review →</button><button class="btn ghost" id="r_cancel">Cancel</button></div>`;
+    $("#back").onclick = viewEcos;
+    $("#r_cancel").onclick = viewEcos;
+    const classNote = () => { $("#r_classnote").textContent = $("#r_class").value === "Class 2"
+      ? "Class 2 runs only the first workflow step (expedited)."
+      : "Class 1 runs the full workflow (engineering review + change-board approval)."; };
+    $("#r_class").onchange = classNote; classNote();
+    drawAff();
+    $("#r_add").onclick = async () => {
+      const num = $("#r_addnum").value.trim(); if (!num) return;
+      try {
+        const items = (await api("/items")).items; const it = items.find((x) => x.number === num);
+        if (!it) throw new Error("No item with that number.");
+        const full = await api("/items/" + it.id); const work = full.revisions.filter((r) => r.status === "working").pop();
+        if (!work) throw new Error("That item has no working revision to release.");
+        await addRev(work.id); $("#r_addnum").value = ""; drawAff();
+      } catch (e) { toast(e.message, "bad"); }
+    };
+    $("#r_submit").onclick = submit;
+  };
+
+  const drawAff = () => {
+    $("#r_aff").innerHTML = affected.length ? affected.map((a, i) => `
+      <div class="aff-card" data-i="${i}">
+        <div class="top"><div><span class="num mono" style="color:var(--teal-d)">${esc(a.number)}</span> <span class="badge b-working">Rev ${esc(a.rev)}</span></div>
+          <button class="btn danger sm aff-rm" data-i="${i}">remove</button></div>
+        <div class="kvgrid">
+          <div class="field" style="margin:0"><label>Inventory disposition</label><select class="a_disp" data-i="${i}">${["Use As Is","Rework","Scrap"].map((x)=>`<option ${x===a.disposition?"selected":""}>${x}</option>`).join("")}</select></div>
+          <div class="field" style="margin:0"><label>Effectivity date</label><input type="date" class="a_date" data-i="${i}" value="${esc(a.effDate)}"></div>
+          <div class="field" style="margin:0"><label>Unit</label><input class="a_unit" data-i="${i}" value="${esc(a.effUnit)}" placeholder="optional"></div>
+          <div class="field" style="margin:0"><label>Batch / Lot</label><input class="a_batch" data-i="${i}" value="${esc(a.effBatch)}" placeholder="optional"></div>
+        </div>
+      </div>`).join("") : `<div class="empty">No revisions added yet.</div>`;
+    $("#r_aff").querySelectorAll(".aff-rm").forEach((b) => b.onclick = () => { affected.splice(+b.dataset.i, 1); drawAff(); });
+    const bind = (cls, key) => $("#r_aff").querySelectorAll(cls).forEach((el) => el.onchange = () => { affected[+el.dataset.i][key] = el.value; });
+    bind(".a_disp", "disposition"); bind(".a_date", "effDate"); bind(".a_unit", "effUnit"); bind(".a_batch", "effBatch");
+  };
+
+  const submit = async () => {
+    if (!affected.length) { toast("Add at least one working revision.", "bad"); return; }
+    const body = { number: $("#r_num").value.trim(), title: $("#r_title").value.trim(), description: $("#r_desc").value,
+      reason: $("#r_reason").value, impactClass: $("#r_class").value,
+      affected: affected.map((a) => ({ revisionId: a.revId, disposition: a.disposition, effDate: a.effDate, effUnit: a.effUnit, effBatch: a.effBatch })) };
+    try { const r = await api("/ecos/release", { method: "POST", body }); toast("ECO submitted — now In Progress."); ecoDetail(r.eco.id); }
+    catch (e) { toast(e.message, "bad"); }
+  };
+
+  render();
 }
 
 async function ecoDetail(id) {
   const d = await api("/ecos/" + id);
   const e = d.eco;
   const stepEls = d.steps.map((s) => {
-    const cls = e.status === "implemented" || s.seq < e.current_seq ? "done" : (s.seq === e.current_seq && e.status === "in_review" ? "cur" : "");
+    const cls = e.status === "released" || s.seq < e.current_seq ? "done" : (s.seq === e.current_seq && e.status === "in_progress" ? "cur" : "");
     return `<span class="step ${cls}"><span class="seq">${s.seq}</span>${esc(s.name)} <span class="mono muted">(${esc(s.role)})</span></span>`;
   }).join('<span class="arrow">→</span>');
-  const canDecide = e.status === "in_review" && d.pendingStep && (ME.role === d.pendingStep.role || ME.role === "admin");
+  const canDecide = e.status === "in_progress" && d.pendingStep && (ME.role === d.pendingStep.role || ME.role === "admin");
+  const classChip = e.impact_class === "Class 2" ? '<span class="ic-class2">Class 2 · Minor</span>' : '<span class="ic-class1">Class 1 · Major</span>';
 
   main().innerHTML = `<span class="back" id="back">← Change Orders</span>
     <div class="page-h"><div><h2 class="mono" style="font-size:20px">${esc(e.number)} ${badge(e.status)}</h2><div class="sub">${esc(e.title)}</div></div></div>
-    <div class="card"><div class="card-h">Approval route</div><div class="card-b"><div class="steps">${stepEls || '<span class="muted">No workflow configured.</span>'}</div></div></div>
+    <div class="card"><div class="card-h">Change details</div><div class="card-b">
+      <div class="kvgrid">
+        <div class="kv"><b>Reason</b><br>${esc(e.reason || "—")}</div>
+        <div class="kv"><b>Impact</b><br>${classChip}</div>
+        <div class="kv" style="grid-column:span 2"><b>Description</b><br>${esc(e.description || "—")}</div>
+      </div></div></div>
+    <div class="card"><div class="card-h"><span>Approval route</span><span class="hint">${e.impact_class === "Class 2" ? "Class 2 — first step only" : "Class 1 — full chain"}</span></div><div class="card-b"><div class="steps">${stepEls || '<span class="muted">No workflow configured.</span>'}</div></div></div>
     <div class="card"><div class="card-h"><span>Affected items</span>${d.affected.length ? `<button class="btn ghost sm" id="ecoCompare">Compare BOMs (From → To)</button>` : ""}</div><div class="card-b" id="aff"></div></div>
     ${canDecide ? `<div class="card"><div class="card-h">Your decision — ${esc(d.pendingStep.name)}</div><div class="card-b">
-      <div class="field"><label>Disposition</label><input id="disp" placeholder="Use-as-is, Rework, Scrap"></div>
       <div class="field"><label>Comment</label><textarea id="cmt" rows="2"></textarea></div>
       <div class="row"><button class="btn" id="approve">Approve step</button><button class="btn danger" id="reject">Reject ECO</button></div></div></div>` : ""}
     <div class="card"><div class="card-h">Approval history</div><div class="tablewrap" id="hist"></div></div>`;
   $("#back").onclick = viewEcos;
   if ($("#ecoCompare")) $("#ecoCompare").onclick = () => ecoCompareModal(id);
-  const draft = e.status === "draft" && canEdit();
-  $("#aff").innerHTML = `
-    ${d.affected.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Name</th><th>Rev</th><th>Status</th></tr></thead><tbody>
-      ${d.affected.map((a) => `<tr><td class="num">${esc(a.number)}</td><td>${esc(a.name)}</td><td class="mono">${esc(a.rev)}</td><td>${badge(a.status)}</td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="empty">No affected items yet.</div>`}
-    ${draft ? `<div class="inline-form" style="margin-top:14px">
-      <div class="field"><label>Add working revision (item number)</label><input id="aff_num" placeholder="FG-1000"></div>
-      <button class="btn ghost" id="aff_add">Add affected item</button><button class="btn" id="submit">Submit for approval →</button></div>
-      <div class="note">Adds the item's current working revision. Submitting moves it into review and locks editing.</div>` : ""}`;
-  if (draft) {
-    $("#aff_add").onclick = async () => {
-      try { const items = await api("/items"); const it = items.items.find((x) => x.number === $("#aff_num").value.trim());
-        if (!it) throw new Error("No item with that number.");
-        const full = await api("/items/" + it.id); const work = full.revisions.filter((r) => r.status === "working").pop();
-        if (!work) throw new Error("That item has no working revision to change.");
-        await api("/ecos/" + id + "/affected", { method: "POST", body: { revisionId: work.id } }); ecoDetail(id);
-      } catch (e2) { toast(e2.message, "bad"); }
-    };
-    $("#submit").onclick = async () => { try { await api("/ecos/" + id + "/submit", { method: "POST" }); toast("Submitted for approval."); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
-  }
+  const eff = (a) => [a.eff_date ? new Date(a.eff_date).toLocaleDateString() : null, a.eff_unit || null, a.eff_batch ? "Lot " + a.eff_batch : null].filter(Boolean).join(" · ") || "—";
+  $("#aff").innerHTML = d.affected.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Name</th><th>Rev</th><th>Status</th><th>Disposition</th><th>Effectivity</th></tr></thead><tbody>
+      ${d.affected.map((a) => `<tr class="click wu-row" data-item="${a.item_id}"><td class="num">${esc(a.number)}</td><td>${esc(a.name)}</td><td class="mono">${esc(a.rev)}</td><td>${badge(a.status)}</td><td>${esc(a.disposition || "—")}</td><td class="muted">${eff(a)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty">No affected items.</div>`;
+  $("#aff").querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
   if (canDecide) {
-    $("#approve").onclick = async () => { try { const r = await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "approve", disposition: $("#disp").value, comment: $("#cmt").value } });
-      toast(r.result === "implemented" ? "Implemented — affected revisions released." : r.result === "advanced" ? "Approved — advanced to " + r.nextStep : "Approved."); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
-    $("#reject").onclick = async () => { try { await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "reject", disposition: $("#disp").value, comment: $("#cmt").value } }); toast("ECO rejected.", "bad"); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
+    $("#approve").onclick = async () => { try { const r = await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "approve", comment: $("#cmt").value } });
+      toast(r.result === "released" ? "ECO released — affected revisions released." : r.result === "advanced" ? "Approved — advanced to " + r.nextStep : "Approved."); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
+    $("#reject").onclick = async () => { try { await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "reject", comment: $("#cmt").value } }); toast("ECO rejected.", "bad"); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
   }
-  $("#hist").innerHTML = d.approvals.length ? `<table><thead><tr><th>Step</th><th>Decision</th><th>Disposition</th><th>By</th><th>When</th></tr></thead><tbody>
-    ${d.approvals.map((a) => `<tr><td>${esc(a.seq)}</td><td>${a.decision === "approve" ? "✓ approve" : "✗ reject"}</td><td>${esc(a.disposition || "")}</td><td>${esc(a.approver_name || "")}</td><td class="muted">${new Date(a.decided_at).toLocaleString()}</td></tr>`).join("")}
+  $("#hist").innerHTML = d.approvals.length ? `<table><thead><tr><th>Step</th><th>Decision</th><th>Comment</th><th>By</th><th>When</th></tr></thead><tbody>
+    ${d.approvals.map((a) => `<tr><td>${esc(a.seq)}</td><td>${a.decision === "approve" ? "✓ approve" : "✗ reject"}</td><td>${esc(a.comment || "")}</td><td>${esc(a.approver_name || "")}</td><td class="muted">${new Date(a.decided_at).toLocaleString()}</td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No decisions yet.</div>`;
 }
 

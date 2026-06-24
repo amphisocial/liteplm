@@ -31,7 +31,7 @@ r.post("/items", async (req, res) => {
       [co(req), number.trim(), name.trim(), description || "", uom || "EA"]);
     const ptype = (req.body.partType === "Buy") ? "Buy" : "Make";
     const life = ["Prototype", "Preproduction", "Production"].includes(req.body.lifecycle) ? req.body.lifecycle : "Prototype";
-    await one("INSERT INTO item_revisions (company_id, item_id, rev, status, lifecycle, part_type) VALUES ($1,$2,'A','working',$3,$4) RETURNING *", [co(req), item.id, life, ptype]);
+    await one("INSERT INTO item_revisions (company_id, item_id, rev, status, lifecycle, part_type, description) VALUES ($1,$2,'A','working',$3,$4,$5) RETURNING *", [co(req), item.id, life, ptype, description || ""]);
     res.json({ item });
   } catch (e) {
     if (String(e.message).includes("duplicate")) return res.status(409).json({ error: "An item with that number already exists." });
@@ -89,7 +89,7 @@ r.get("/compare", async (req, res) => {
   res.json({ from: a, to: b, diff: diffBom(fa, fb) });
 });
 
-// update lifecycle / type on a working revision
+// update lifecycle / type / description on a working revision
 r.patch("/revisions/:revId", async (req, res) => {
   if (!canEdit(req)) return res.status(403).json({ error: "Only admins and engineers can edit revisions." });
   const rev = await one("SELECT * FROM item_revisions WHERE id=$1 AND company_id=$2", [req.params.revId, co(req)]);
@@ -97,7 +97,8 @@ r.patch("/revisions/:revId", async (req, res) => {
   if (rev.status === "released") return res.status(409).json({ error: "Released revision is locked." });
   const life = ["Prototype", "Preproduction", "Production"].includes(req.body.lifecycle) ? req.body.lifecycle : rev.lifecycle;
   const ptype = ["Make", "Buy"].includes(req.body.partType) ? req.body.partType : rev.part_type;
-  const up = await one("UPDATE item_revisions SET lifecycle=$1, part_type=$2 WHERE id=$3 AND company_id=$4 RETURNING *", [life, ptype, rev.id, co(req)]);
+  const desc = typeof req.body.description === "string" ? req.body.description : rev.description;
+  const up = await one("UPDATE item_revisions SET lifecycle=$1, part_type=$2, description=$3 WHERE id=$4 AND company_id=$5 RETURNING *", [life, ptype, desc, rev.id, co(req)]);
   res.json({ revision: up });
 });
 
@@ -109,8 +110,8 @@ r.post("/items/:id/revise", async (req, res) => {
   const last = await one("SELECT * FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id DESC LIMIT 1", [item.id, co(req)]);
   if (last && last.status === "working") return res.status(409).json({ error: `Rev ${last.rev} is still working — release it before creating a new revision.` });
   const nextRev = last ? String.fromCharCode(last.rev.charCodeAt(0) + 1) : "A";
-  const rev = await one("INSERT INTO item_revisions (company_id, item_id, rev, status, lifecycle, part_type) VALUES ($1,$2,$3,'working',$4,$5) RETURNING *",
-    [co(req), item.id, nextRev, last ? last.lifecycle : "Prototype", last ? last.part_type : "Make"]);
+  const rev = await one("INSERT INTO item_revisions (company_id, item_id, rev, status, lifecycle, part_type, description) VALUES ($1,$2,$3,'working',$4,$5,$6) RETURNING *",
+    [co(req), item.id, nextRev, last ? last.lifecycle : "Prototype", last ? last.part_type : "Make", last ? last.description : ""]);
   // carry the BOM forward into the new working rev
   if (last) {
     await query(`INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, child_rev_id, qty, ref_des)

@@ -49,3 +49,18 @@ All calls are company-scoped. See the in-app API page for the endpoint list.
   changed, shown X → Y).
 - **ECO From → To** — on a change order, "Compare BOMs" redlines each affected
   item from its latest released revision (From) to the working revision (To).
+
+## Release process (Revise vs Release → ECO)
+- **Revise** (on a released revision) creates the next letter as a new *working* copy.
+  You cannot revise a working revision — release it first.
+- **Release → ECO** (on a working revision) opens a change-order form pre-loaded
+  with that revision; add more working revisions to mass-release. The form captures
+  description, reason (supplier obsolescence / design flaw / cost reduction /
+  documentation / other), impact classification, and per-affected inventory
+  disposition (Use As Is / Rework / Scrap) and effectivity (date / unit / batch).
+- **Impact classification** routes approval: **Class 1 (major)** runs the full
+  workflow; **Class 2 (minor)** runs only the first step. On submit the ECO is
+  **In Progress**; when the final required step is approved it becomes **Released**
+  and every affected revision is released (locked).
+- **Edit a working revision** in place: lifecycle (Prototype/Preproduction/
+  Production), Make/Buy, and description (description is per revision).

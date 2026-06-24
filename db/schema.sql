@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS item_revisions (
   status       TEXT NOT NULL DEFAULT 'working',   -- working | in_review | released | obsolete
   lifecycle    TEXT NOT NULL DEFAULT 'Production', -- Prototype | Preproduction | Production
   part_type    TEXT NOT NULL DEFAULT 'Make',       -- Make | Buy
+  description  TEXT DEFAULT '',
   notes        TEXT DEFAULT '',
   released_at  TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -105,7 +106,9 @@ CREATE TABLE IF NOT EXISTS ecos (
   number        TEXT NOT NULL,
   title         TEXT NOT NULL,
   description   TEXT DEFAULT '',
-  status        TEXT NOT NULL DEFAULT 'draft',  -- draft | in_review | approved | implemented | rejected
+  reason        TEXT DEFAULT '',                -- supplier obsolescence | design flaw | cost reduction | documentation | other
+  impact_class  TEXT DEFAULT 'Class 1',         -- Class 1 (major) | Class 2 (minor)
+  status        TEXT NOT NULL DEFAULT 'draft',  -- draft | in_progress | released | rejected
   current_seq   INT NOT NULL DEFAULT 0,         -- which workflow step is pending
   created_by    BIGINT REFERENCES users(id),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -116,7 +119,11 @@ CREATE TABLE IF NOT EXISTS eco_affected (
   id               BIGSERIAL PRIMARY KEY,
   company_id       BIGINT NOT NULL REFERENCES companies(id),
   eco_id           BIGINT NOT NULL REFERENCES ecos(id),
-  item_revision_id BIGINT NOT NULL REFERENCES item_revisions(id)
+  item_revision_id BIGINT NOT NULL REFERENCES item_revisions(id),
+  disposition      TEXT DEFAULT 'Use As Is',     -- Use As Is | Rework | Scrap
+  eff_date         DATE,
+  eff_unit         TEXT DEFAULT '',
+  eff_batch        TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS eco_approvals (
@@ -143,5 +150,15 @@ ALTER TABLE vendor_parts ADD COLUMN IF NOT EXISTS item_revision_id BIGINT REFERE
 ALTER TABLE bom_lines    ADD COLUMN IF NOT EXISTS child_rev_id BIGINT REFERENCES item_revisions(id);
 ALTER TABLE item_revisions ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'Production';
 ALTER TABLE item_revisions ADD COLUMN IF NOT EXISTS part_type TEXT NOT NULL DEFAULT 'Make';
+ALTER TABLE item_revisions ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT '';
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS impact_class TEXT DEFAULT 'Class 1';
+ALTER TABLE eco_affected ADD COLUMN IF NOT EXISTS disposition TEXT DEFAULT 'Use As Is';
+ALTER TABLE eco_affected ADD COLUMN IF NOT EXISTS eff_date DATE;
+ALTER TABLE eco_affected ADD COLUMN IF NOT EXISTS eff_unit TEXT DEFAULT '';
+ALTER TABLE eco_affected ADD COLUMN IF NOT EXISTS eff_batch TEXT DEFAULT '';
+-- map legacy ECO statuses to the new lifecycle
+UPDATE ecos SET status='in_progress' WHERE status='in_review';
+UPDATE ecos SET status='released' WHERE status IN ('approved','implemented');
 CREATE INDEX IF NOT EXISTS idx_bom_childrev ON bom_lines(company_id, child_rev_id);
 CREATE INDEX IF NOT EXISTS idx_vp_rev       ON vendor_parts(company_id, item_revision_id);
