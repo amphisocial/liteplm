@@ -9,6 +9,8 @@ const r = Router();
 r.use(requireAuth);
 const co = (req) => req.ctx.company_id;
 const canEdit = (req) => ["admin", "engineer"].includes(req.ctx.user.role);
+// stamp an item as modified (Date Modified / Modified By)
+const touchItem = (req, itemId) => query("UPDATE items SET updated_at=now(), updated_by=$1 WHERE id=$2 AND company_id=$3", [req.ctx.user.id, itemId, co(req)]);
 
 // ---------- ITEMS ----------
 r.get("/items", async (req, res) => {
@@ -27,8 +29,8 @@ r.post("/items", async (req, res) => {
   const { number, name, description, uom } = req.body || {};
   if (!number || !name) return res.status(400).json({ error: "Item number and name are required." });
   try {
-    const item = await one("INSERT INTO items (company_id, number, name, description, uom) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-      [co(req), number.trim(), name.trim(), description || "", uom || "EA"]);
+    const item = await one("INSERT INTO items (company_id, number, name, description, uom, created_by, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$6) RETURNING *",
+      [co(req), number.trim(), name.trim(), description || "", uom || "EA", req.ctx.user.id]);
     const ptype = (req.body.partType === "Buy") ? "Buy" : "Make";
     const life = ["Prototype", "Preproduction", "Production"].includes(req.body.lifecycle) ? req.body.lifecycle : "Prototype";
     await one("INSERT INTO item_revisions (company_id, item_id, rev, status, lifecycle, part_type, description) VALUES ($1,$2,'A','working',$3,$4,$5) RETURNING *", [co(req), item.id, life, ptype, description || ""]);
@@ -40,7 +42,10 @@ r.post("/items", async (req, res) => {
 });
 
 r.get("/items/:id", async (req, res) => {
-  const item = await one("SELECT * FROM items WHERE id=$1 AND company_id=$2", [req.params.id, co(req)]);
+  const item = await one(
+    `SELECT i.*, cu.name AS created_by_name, uu.name AS updated_by_name
+       FROM items i LEFT JOIN users cu ON cu.id=i.created_by LEFT JOIN users uu ON uu.id=i.updated_by
+     WHERE i.id=$1 AND i.company_id=$2`, [req.params.id, co(req)]);
   if (!item) return res.status(404).json({ error: "Item not found." });
   const revs = await query("SELECT * FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id", [item.id, co(req)]);
   res.json({ item, revisions: revs });
@@ -99,6 +104,7 @@ r.patch("/revisions/:revId", async (req, res) => {
   const ptype = ["Make", "Buy"].includes(req.body.partType) ? req.body.partType : rev.part_type;
   const desc = typeof req.body.description === "string" ? req.body.description : rev.description;
   const up = await one("UPDATE item_revisions SET lifecycle=$1, part_type=$2, description=$3 WHERE id=$4 AND company_id=$5 RETURNING *", [life, ptype, desc, rev.id, co(req)]);
+  await touchItem(req, rev.item_id);
   res.json({ revision: up });
 });
 
@@ -118,6 +124,7 @@ r.post("/items/:id/revise", async (req, res) => {
                  SELECT company_id, $1, child_item_id, child_rev_id, qty, ref_des FROM bom_lines WHERE parent_rev_id=$2 AND company_id=$3`,
       [rev.id, last.id, co(req)]);
   }
+  await touchItem(req, item.id);
   res.json({ revision: rev });
 });
 
@@ -144,15 +151,17 @@ r.post("/revisions/:revId/bom", async (req, res) => {
   const childRev = await one("SELECT id FROM item_revisions WHERE item_id=$1 AND company_id=$2 ORDER BY id DESC LIMIT 1", [child.id, co(req)]);
   const line = await one("INSERT INTO bom_lines (company_id, parent_rev_id, child_item_id, child_rev_id, qty, ref_des) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
     [co(req), rev.id, child.id, childRev ? childRev.id : null, Number(qty) || 1, refDes || ""]);
+  await touchItem(req, rev.item_id);
   res.json({ line });
 });
 
 r.delete("/bom/:lineId", async (req, res) => {
   if (!canEdit(req)) return res.status(403).json({ error: "Only admins and engineers can edit BOMs." });
-  const line = await one(`SELECT b.*, v.status FROM bom_lines b JOIN item_revisions v ON v.id=b.parent_rev_id WHERE b.id=$1 AND b.company_id=$2`, [req.params.lineId, co(req)]);
+  const line = await one(`SELECT b.*, v.status, v.item_id FROM bom_lines b JOIN item_revisions v ON v.id=b.parent_rev_id WHERE b.id=$1 AND b.company_id=$2`, [req.params.lineId, co(req)]);
   if (!line) return res.status(404).json({ error: "Line not found." });
   if (line.status === "released") return res.status(409).json({ error: "Released revision is locked." });
   await query("DELETE FROM bom_lines WHERE id=$1 AND company_id=$2", [req.params.lineId, co(req)]);
+  await touchItem(req, line.item_id);
   res.json({ ok: true });
 });
 

@@ -205,7 +205,8 @@ async function itemDetail(id, focusRevId) {
       <h2 class="mono" style="font-size:21px">${esc(d.item.number)}
         <span class="badge b-${esc(focus.status)}" style="font-size:11.5px;vertical-align:middle;margin-left:4px">Rev ${esc(focus.rev)} · ${esc(focus.status).replace("_", " ")}</span>
         ${typeBadge(focus.part_type)} ${lifeBadge(focus.lifecycle)}</h2>
-      <div class="sub">${esc(d.item.name)}${descShown ? " — " + esc(descShown) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div></div>
+      <div class="sub">${esc(d.item.name)}${descShown ? " — " + esc(descShown) : ""}${d.item.uom ? " · " + esc(d.item.uom) : ""}</div>
+      <div class="metaline">Created <b>${dt(d.item.created_at)}</b> by <b>${esc(d.item.created_by_name || "—")}</b> · Modified <b>${dt(d.item.updated_at)}</b> by <b>${esc(d.item.updated_by_name || "—")}</b></div></div>
       ${canEdit() ? `<div class="btnrow"><button class="btn ghost" id="revise">Revise</button><button class="btn" id="release">Release → ECO</button></div>` : ""}</div>
     ${editableRev ? `<div class="card"><div class="card-h"><span>Edit working revision ${esc(focus.rev)}</span></div><div class="card-b">
       <div class="kvgrid">
@@ -368,9 +369,9 @@ async function viewEcos() {
 
 // ---------------- RELEASE → ECO form ----------------
 const REASONS = ["supplier obsolescence", "design flaw", "cost reduction", "documentation", "other"];
-async function viewReleaseForm(seedRevId) {
+async function viewReleaseForm(seedRevId, ecoId) {
   const { ecos } = await api("/ecos");
-  const nextNum = "ECO-" + (1000 + ecos.length + 1);
+  let draft = null, prefill = { number: "ECO-" + (1000 + ecos.length + 1), title: "", description: "", reason: REASONS[0], impactClass: "Class 1" };
   const affected = []; // {revId, number, rev, disposition, effDate, effUnit, effBatch}
   const addRev = async (revId) => {
     if (affected.some((a) => String(a.revId) === String(revId))) return;
@@ -378,20 +379,27 @@ async function viewReleaseForm(seedRevId) {
     if (fr.revision.status !== "working") { toast(`Rev ${fr.revision.rev} of ${fr.revision.number} isn't working.`, "bad"); return; }
     affected.push({ revId, number: fr.revision.number, rev: fr.revision.rev, disposition: "Use As Is", effDate: "", effUnit: "", effBatch: "" });
   };
+  if (ecoId) {
+    const d = await api("/ecos/" + ecoId);
+    draft = d.eco;
+    prefill = { number: draft.number, title: draft.title, description: draft.description || "", reason: draft.reason || REASONS[0], impactClass: draft.impact_class || "Class 1" };
+    d.affected.forEach((a) => affected.push({ revId: a.item_revision_id, number: a.number, rev: a.rev, disposition: a.disposition || "Use As Is",
+      effDate: a.eff_date ? String(a.eff_date).slice(0, 10) : "", effUnit: a.eff_unit || "", effBatch: a.eff_batch || "" }));
+  }
   if (seedRevId) await addRev(seedRevId);
 
   const render = () => {
     main().innerHTML = `<span class="back" id="back">← Change Orders</span>
-      <div class="page-h"><div><h2>Release → ECO</h2><div class="sub">Mass-release working revisions through a change order.</div></div></div>
+      <div class="page-h"><div><h2>${draft ? "Edit draft ECO" : "Release → ECO"}</h2><div class="sub">Save a draft now, or submit working revisions for review.</div></div></div>
       <div class="card"><div class="card-h">Change order</div><div class="card-b">
         <div class="kvgrid">
-          <div class="field" style="margin:0"><label>ECO number</label><input id="r_num" value="${esc(nextNum)}"></div>
-          <div class="field" style="margin:0"><label>Title</label><input id="r_title" placeholder="Release bracket update"></div>
+          <div class="field" style="margin:0"><label>ECO number</label><input id="r_num" value="${esc(prefill.number)}"></div>
+          <div class="field" style="margin:0"><label>Title</label><input id="r_title" value="${esc(prefill.title)}" placeholder="Release bracket update"></div>
         </div>
-        <div class="field" style="margin:12px 0 0"><label>Description of change</label><textarea id="r_desc" rows="2" placeholder="What is changing and why"></textarea></div>
+        <div class="field" style="margin:12px 0 0"><label>Description of change</label><textarea id="r_desc" rows="2" placeholder="What is changing and why">${esc(prefill.description)}</textarea></div>
         <div class="kvgrid" style="margin-top:12px">
-          <div class="field" style="margin:0"><label>Reason for change</label><select id="r_reason">${REASONS.map((x)=>`<option>${x}</option>`).join("")}</select></div>
-          <div class="field" style="margin:0"><label>Impact classification</label><select id="r_class"><option value="Class 1">Class 1 — Major (full CCB review)</option><option value="Class 2">Class 2 — Minor (expedited)</option></select></div>
+          <div class="field" style="margin:0"><label>Reason for change</label><select id="r_reason">${REASONS.map((x)=>`<option ${x===prefill.reason?"selected":""}>${x}</option>`).join("")}</select></div>
+          <div class="field" style="margin:0"><label>Impact classification</label><select id="r_class"><option value="Class 1" ${prefill.impactClass!=="Class 2"?"selected":""}>Class 1 — Major (full CCB review)</option><option value="Class 2" ${prefill.impactClass==="Class 2"?"selected":""}>Class 2 — Minor (expedited)</option></select></div>
         </div>
         <div class="note" id="r_classnote"></div>
       </div></div>
@@ -403,9 +411,9 @@ async function viewReleaseForm(seedRevId) {
           <button class="btn ghost" id="r_add">Add working revision</button>
         </div>
       </div></div>
-      <div class="btnrow"><button class="btn" id="r_submit">Submit for review →</button><button class="btn ghost" id="r_cancel">Cancel</button></div>`;
+      <div class="btnrow"><button class="btn" id="r_submit">Submit for review →</button><button class="btn ghost" id="r_save">Save draft</button><button class="btn ghost" id="r_cancel">Cancel</button></div>`;
     $("#back").onclick = viewEcos;
-    $("#r_cancel").onclick = viewEcos;
+    $("#r_cancel").onclick = () => draft ? ecoDetail(draft.id) : viewEcos();
     const classNote = () => { $("#r_classnote").textContent = $("#r_class").value === "Class 2"
       ? "Class 2 runs only the first workflow step (expedited)."
       : "Class 1 runs the full workflow (engineering review + change-board approval)."; };
@@ -421,7 +429,8 @@ async function viewReleaseForm(seedRevId) {
         await addRev(work.id); $("#r_addnum").value = ""; drawAff();
       } catch (e) { toast(e.message, "bad"); }
     };
-    $("#r_submit").onclick = submit;
+    $("#r_save").onclick = () => persist(false);
+    $("#r_submit").onclick = () => persist(true);
   };
 
   const drawAff = () => {
@@ -441,30 +450,49 @@ async function viewReleaseForm(seedRevId) {
     bind(".a_disp", "disposition"); bind(".a_date", "effDate"); bind(".a_unit", "effUnit"); bind(".a_batch", "effBatch");
   };
 
-  const submit = async () => {
-    if (!affected.length) { toast("Add at least one working revision.", "bad"); return; }
-    const body = { number: $("#r_num").value.trim(), title: $("#r_title").value.trim(), description: $("#r_desc").value,
+  const persist = async (alsoSubmit) => {
+    if (alsoSubmit && !affected.length) { toast("Add at least one working revision to submit.", "bad"); return; }
+    const body = { id: draft ? draft.id : undefined, number: $("#r_num").value.trim(), title: $("#r_title").value.trim(), description: $("#r_desc").value,
       reason: $("#r_reason").value, impactClass: $("#r_class").value,
       affected: affected.map((a) => ({ revisionId: a.revId, disposition: a.disposition, effDate: a.effDate, effUnit: a.effUnit, effBatch: a.effBatch })) };
-    try { const r = await api("/ecos/release", { method: "POST", body }); toast("ECO submitted — now In Progress."); ecoDetail(r.eco.id); }
-    catch (e) { toast(e.message, "bad"); }
+    try {
+      const saved = await api("/ecos/draft", { method: "POST", body });
+      if (alsoSubmit) { await api("/ecos/" + saved.eco.id + "/submit", { method: "POST" }); toast("Submitted — now In Progress."); }
+      else toast("Draft saved.");
+      ecoDetail(saved.eco.id);
+    } catch (e) { toast(e.message, "bad"); }
   };
 
   render();
 }
 
-async function ecoDetail(id) {
+function fmtDuration(ms) {
+  if (ms < 0) ms = 0;
+  const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d > 0) return `${d}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${m % 60}m`;
+  return `${m}m`;
+}
+const dt = (s) => s ? new Date(s).toLocaleString() : "—";
+
+async function ecoDetail(id, tab) {
   const d = await api("/ecos/" + id);
   const e = d.eco;
+  tab = tab || "details";
   const stepEls = d.steps.map((s) => {
     const cls = e.status === "released" || s.seq < e.current_seq ? "done" : (s.seq === e.current_seq && e.status === "in_progress" ? "cur" : "");
     return `<span class="step ${cls}"><span class="seq">${s.seq}</span>${esc(s.name)} <span class="mono muted">(${esc(s.role)})</span></span>`;
   }).join('<span class="arrow">→</span>');
   const canDecide = e.status === "in_progress" && d.pendingStep && (ME.role === d.pendingStep.role || ME.role === "admin");
+  const canEditDraft = e.status === "draft" && canEdit();
   const classChip = e.impact_class === "Class 2" ? '<span class="ic-class2">Class 2 · Minor</span>' : '<span class="ic-class1">Class 1 · Major</span>';
+  const eff = (a) => [a.eff_date ? new Date(a.eff_date).toLocaleDateString() : null, a.eff_unit || null, a.eff_batch ? "Lot " + a.eff_batch : null].filter(Boolean).join(" · ") || "—";
 
-  main().innerHTML = `<span class="back" id="back">← Change Orders</span>
-    <div class="page-h"><div><h2 class="mono" style="font-size:20px">${esc(e.number)} ${badge(e.status)}</h2><div class="sub">${esc(e.title)}</div></div></div>
+  const headerBtns = canEditDraft
+    ? `<div class="btnrow"><button class="btn ghost" id="eco_edit">Edit</button><button class="btn" id="eco_submit">Submit for review →</button></div>`
+    : "";
+
+  const detailsTab = `
     <div class="card"><div class="card-h">Change details</div><div class="card-b">
       <div class="kvgrid">
         <div class="kv"><b>Reason</b><br>${esc(e.reason || "—")}</div>
@@ -472,26 +500,60 @@ async function ecoDetail(id) {
         <div class="kv" style="grid-column:span 2"><b>Description</b><br>${esc(e.description || "—")}</div>
       </div></div></div>
     <div class="card"><div class="card-h"><span>Approval route</span><span class="hint">${e.impact_class === "Class 2" ? "Class 2 — first step only" : "Class 1 — full chain"}</span></div><div class="card-b"><div class="steps">${stepEls || '<span class="muted">No workflow configured.</span>'}</div></div></div>
-    <div class="card"><div class="card-h"><span>Affected items</span>${d.affected.length ? `<button class="btn ghost sm" id="ecoCompare">Compare BOMs (From → To)</button>` : ""}</div><div class="card-b" id="aff"></div></div>
-    ${canDecide ? `<div class="card"><div class="card-h">Your decision — ${esc(d.pendingStep.name)}</div><div class="card-b">
-      <div class="field"><label>Comment</label><textarea id="cmt" rows="2"></textarea></div>
-      <div class="row"><button class="btn" id="approve">Approve step</button><button class="btn danger" id="reject">Reject ECO</button></div></div></div>` : ""}
-    <div class="card"><div class="card-h">Approval history</div><div class="tablewrap" id="hist"></div></div>`;
+    <div class="card"><div class="card-h"><span>Affected items</span>${d.affected.length ? `<button class="btn ghost sm" id="ecoCompare">Compare BOMs (From → To)</button>` : ""}</div><div class="card-b" id="aff">
+      ${d.affected.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Name</th><th>Rev</th><th>Status</th><th>Disposition</th><th>Effectivity</th></tr></thead><tbody>
+        ${d.affected.map((a) => `<tr class="click wu-row" data-item="${a.item_id}"><td class="num">${esc(a.number)}</td><td>${esc(a.name)}</td><td class="mono">${esc(a.rev)}</td><td>${badge(a.status)}</td><td>${esc(a.disposition || "—")}</td><td class="muted">${eff(a)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">No affected items.</div>`}</div></div>
+    ${canDecide ? `<div class="card"><div class="card-h">Your decision — ${esc(d.pendingStep.name)} <span class="mono muted">(${esc(d.pendingStep.role)})</span></div><div class="card-b">
+      <div class="field"><label>Comment</label><textarea id="cmt" rows="2" placeholder="Optional review note"></textarea></div>
+      <div class="row"><button class="btn" id="approve">Approve step</button><button class="btn danger" id="reject">Reject → back to draft</button></div></div></div>`
+    : e.status === "in_progress" ? `<div class="card"><div class="card-b"><div class="await">Awaiting <b>${esc(d.pendingStep ? d.pendingStep.role : "")}</b> approval for “${esc(d.pendingStep ? d.pendingStep.name : "")}”. Your role (${esc(ME.role)}) can't act on this step.</div></div></div>` : ""}`;
+
+  // ---- audit tab ----
+  const cycleStr = e.submitted_at
+    ? (e.released_at ? fmtDuration(new Date(e.released_at) - new Date(e.submitted_at)) + " (released)"
+                     : fmtDuration(Date.now() - new Date(e.submitted_at)) + " (in progress)")
+    : "—";
+  const EVENT_LABEL = (ev) => ({
+    created: "Created", edited: "Edited (draft)", submitted: "Submitted for review", resubmitted: "Resubmitted for review",
+    approved: `Approved “${esc(ev.step_name || "")}”`, rejected: `Rejected at “${esc(ev.step_name || "")}”`, released: "Released",
+  }[ev.type] || ev.type);
+  const auditTab = `
+    <div class="card"><div class="card-h">Record</div><div class="card-b">
+      <div class="meta-grid">
+        <div class="kv"><b>Date created</b><span>${dt(e.created_at)}</span></div>
+        <div class="kv"><b>Created by</b><span>${esc(e.created_by_name || "—")}</span></div>
+        <div class="kv"><b>Date modified</b><span>${dt(e.updated_at)}</span></div>
+        <div class="kv"><b>Modified by</b><span>${esc(e.updated_by_name || "—")}</span></div>
+        <div class="kv"><b>Submitted (cycle start)</b><span>${dt(e.submitted_at)}</span></div>
+        <div class="kv"><b>Final approval</b><span>${dt(e.released_at)}</span></div>
+        <div class="kv"><b>Cycle time</b><span class="cyc">${cycleStr}</span></div>
+      </div></div></div>
+    <div class="card"><div class="card-h">Chronology</div><div class="card-b">
+      ${d.events.length ? `<div class="timeline">${d.events.map((ev) => `
+        <div class="tl-item"><span class="tl-dot ${esc(ev.type)}"></span>
+          <div class="tl-head">${EVENT_LABEL(ev)}${ev.step_role ? `<span class="tl-role">${esc(ev.step_role)}</span>` : ""} <span class="who">— ${esc(ev.user_name || "system")}</span></div>
+          <div class="tl-time">${dt(ev.created_at)}</div>
+          ${ev.comment ? `<div class="tl-cmt">${esc(ev.comment)}</div>` : ""}
+        </div>`).join("")}</div>` : `<div class="empty">No events yet.</div>`}
+    </div></div>`;
+
+  main().innerHTML = `<span class="back" id="back">← Change Orders</span>
+    <div class="page-h"><div><h2 class="mono" style="font-size:20px">${esc(e.number)} ${badge(e.status)}</h2><div class="sub">${esc(e.title)}</div></div>${headerBtns}</div>
+    <div class="tabs"><div class="tab ${tab === "details" ? "on" : ""}" data-tab="details">Details</div><div class="tab ${tab === "audit" ? "on" : ""}" data-tab="audit">Audit</div></div>
+    <div id="tabbody">${tab === "audit" ? auditTab : detailsTab}</div>`;
+
   $("#back").onclick = viewEcos;
+  document.querySelectorAll(".tab").forEach((t) => t.onclick = () => ecoDetail(id, t.dataset.tab));
+  if ($("#eco_edit")) $("#eco_edit").onclick = () => viewReleaseForm(null, id);
+  if ($("#eco_submit")) $("#eco_submit").onclick = async () => { try { await api("/ecos/" + id + "/submit", { method: "POST" }); toast("Submitted — now In Progress."); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
   if ($("#ecoCompare")) $("#ecoCompare").onclick = () => ecoCompareModal(id);
-  const eff = (a) => [a.eff_date ? new Date(a.eff_date).toLocaleDateString() : null, a.eff_unit || null, a.eff_batch ? "Lot " + a.eff_batch : null].filter(Boolean).join(" · ") || "—";
-  $("#aff").innerHTML = d.affected.length ? `<div class="tablewrap"><table><thead><tr><th>Item</th><th>Name</th><th>Rev</th><th>Status</th><th>Disposition</th><th>Effectivity</th></tr></thead><tbody>
-      ${d.affected.map((a) => `<tr class="click wu-row" data-item="${a.item_id}"><td class="num">${esc(a.number)}</td><td>${esc(a.name)}</td><td class="mono">${esc(a.rev)}</td><td>${badge(a.status)}</td><td>${esc(a.disposition || "—")}</td><td class="muted">${eff(a)}</td></tr>`).join("")}
-    </tbody></table></div>` : `<div class="empty">No affected items.</div>`;
-  $("#aff").querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
+  document.querySelectorAll(".wu-row").forEach((tr) => tr.onclick = () => itemDetail(tr.dataset.item));
   if (canDecide) {
     $("#approve").onclick = async () => { try { const r = await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "approve", comment: $("#cmt").value } });
       toast(r.result === "released" ? "ECO released — affected revisions released." : r.result === "advanced" ? "Approved — advanced to " + r.nextStep : "Approved."); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
-    $("#reject").onclick = async () => { try { await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "reject", comment: $("#cmt").value } }); toast("ECO rejected.", "bad"); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
+    $("#reject").onclick = async () => { try { await api("/ecos/" + id + "/decide", { method: "POST", body: { decision: "reject", comment: $("#cmt").value } }); toast("Rejected — ECO returned to draft.", "bad"); ecoDetail(id); } catch (e2) { toast(e2.message, "bad"); } };
   }
-  $("#hist").innerHTML = d.approvals.length ? `<table><thead><tr><th>Step</th><th>Decision</th><th>Comment</th><th>By</th><th>When</th></tr></thead><tbody>
-    ${d.approvals.map((a) => `<tr><td>${esc(a.seq)}</td><td>${a.decision === "approve" ? "✓ approve" : "✗ reject"}</td><td>${esc(a.comment || "")}</td><td>${esc(a.approver_name || "")}</td><td class="muted">${new Date(a.decided_at).toLocaleString()}</td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">No decisions yet.</div>`;
 }
 
 // ---------------- VENDORS ----------------

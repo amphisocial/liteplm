@@ -33,7 +33,7 @@ async function bulkInsert(client, table, cols, rows, build) {
   }
 }
 
-async function runImport(companyId, files) {
+async function runImport(companyId, files, userId) {
   const items = parseCsv(files.items || "").rows;
   const revisions = parseCsv(files.revisions || "").rows;
   const boms = parseCsv(files.boms || "").rows;
@@ -51,9 +51,9 @@ async function runImport(companyId, files) {
     }
 
     // items
-    await bulkInsert(client, "items", ["company_id", "number", "name", "description", "uom"], items, (x) => {
+    await bulkInsert(client, "items", ["company_id", "number", "name", "description", "uom", "created_by", "updated_by"], items, (x) => {
       if (!x.number || !x.name) return null;
-      return [companyId, x.number.trim(), x.name.trim(), x.description || "", (x.uom || "EA").trim()];
+      return [companyId, x.number.trim(), x.name.trim(), x.description || "", (x.uom || "EA").trim(), userId, userId];
     });
     const itemRows = (await client.query("SELECT id, number FROM items WHERE company_id=$1", [companyId])).rows;
     const itemByNum = new Map(itemRows.map((i) => [i.number, i.id]));
@@ -122,7 +122,7 @@ async function runImport(companyId, files) {
 
 // upload your own CSVs (text in the body)
 r.post("/import", async (req, res) => {
-  try { res.json({ ok: true, counts: await runImport(req.ctx.company_id, req.body || {}) }); }
+  try { res.json({ ok: true, counts: await runImport(req.ctx.company_id, req.body || {}, req.ctx.user.id) }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -134,7 +134,7 @@ r.post("/import/sample", async (req, res) => {
     const counts = await runImport(req.ctx.company_id, {
       items: read("items.csv"), revisions: read("revisions.csv"), boms: read("boms.csv"),
       vendors: read("vendors.csv"), vendorParts: read("vendor_parts.csv"),
-    });
+    }, req.ctx.user.id);
     res.json({ ok: true, counts, dataset: "medical" });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

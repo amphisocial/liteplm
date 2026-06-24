@@ -64,3 +64,18 @@ All calls are company-scoped. See the in-app API page for the endpoint list.
   and every affected revision is released (locked).
 - **Edit a working revision** in place: lifecycle (Prototype/Preproduction/
   Production), Make/Buy, and description (description is per revision).
+
+## Audit, drafts & cycle time
+- **Drafts** — Release → ECO has **Save draft** and **Submit for review**. A draft can
+  be edited (fields and affected items) and submitted when ready.
+- **Reject → draft** — rejecting at any step returns the ECO to draft (affected
+  revisions go back to working) so it can be edited and resubmitted. The audit keeps
+  the full history across rejections and resubmissions.
+- **Role gating** — only the role assigned to a workflow step (or an admin) can act on
+  it. An approver cannot approve an engineer-role step, and vice versa.
+- **Cycle time** — starts at the first submit and ends at release (spanning any
+  reject/resubmit). Shown on the ECO's **Audit** tab.
+- **Audit tab** — Date Created / Modified, Created / Modified By, Submitted, Final
+  Approval, Cycle Time, plus a full chronology (created, submitted, approved/rejected
+  per step with approver name, role, comment, timestamp, resubmitted, released).
+- **Item audit** — items record Created / Modified date and user, shown on the item page.

@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS items (
   name         TEXT NOT NULL,
   description  TEXT DEFAULT '',
   uom          TEXT DEFAULT 'EA',
+  created_by   BIGINT REFERENCES users(id),
+  updated_by   BIGINT REFERENCES users(id),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (company_id, number)
 );
@@ -108,11 +111,29 @@ CREATE TABLE IF NOT EXISTS ecos (
   description   TEXT DEFAULT '',
   reason        TEXT DEFAULT '',                -- supplier obsolescence | design flaw | cost reduction | documentation | other
   impact_class  TEXT DEFAULT 'Class 1',         -- Class 1 (major) | Class 2 (minor)
-  status        TEXT NOT NULL DEFAULT 'draft',  -- draft | in_progress | released | rejected
+  status        TEXT NOT NULL DEFAULT 'draft',  -- draft | in_progress | released
   current_seq   INT NOT NULL DEFAULT 0,         -- which workflow step is pending
   created_by    BIGINT REFERENCES users(id),
+  updated_by    BIGINT REFERENCES users(id),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  submitted_at  TIMESTAMPTZ,                    -- first submit (cycle-time start)
+  released_at   TIMESTAMPTZ,                    -- final approval (cycle-time end)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (company_id, number)
+);
+
+-- chronological audit trail for an ECO
+CREATE TABLE IF NOT EXISTS eco_events (
+  id          BIGSERIAL PRIMARY KEY,
+  company_id  BIGINT NOT NULL REFERENCES companies(id),
+  eco_id      BIGINT NOT NULL REFERENCES ecos(id),
+  type        TEXT NOT NULL,                    -- created | edited | submitted | resubmitted | approved | rejected | released
+  seq         INT,
+  step_name   TEXT,
+  step_role   TEXT,
+  user_id     BIGINT REFERENCES users(id),
+  comment     TEXT DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS eco_affected (
@@ -160,5 +181,13 @@ ALTER TABLE eco_affected ADD COLUMN IF NOT EXISTS eff_batch TEXT DEFAULT '';
 -- map legacy ECO statuses to the new lifecycle
 UPDATE ecos SET status='in_progress' WHERE status='in_review';
 UPDATE ecos SET status='released' WHERE status IN ('approved','implemented');
+ALTER TABLE items ADD COLUMN IF NOT EXISTS created_by BIGINT REFERENCES users(id);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_by BIGINT REFERENCES users(id);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS updated_by BIGINT REFERENCES users(id);
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS submitted_at TIMESTAMPTZ;
+ALTER TABLE ecos ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_bom_childrev ON bom_lines(company_id, child_rev_id);
 CREATE INDEX IF NOT EXISTS idx_vp_rev       ON vendor_parts(company_id, item_revision_id);
+CREATE INDEX IF NOT EXISTS idx_eco_events   ON eco_events(company_id, eco_id, id);

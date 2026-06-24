@@ -222,3 +222,30 @@ tr.active td{background:var(--teal-soft)!important;box-shadow:inset 3px 0 0 var(
 .aff-card .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .kvgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .btnrow{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.tab{padding:9px 16px;font-size:13.5px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--teal-d);border-bottom-color:var(--teal)}
+
+/* ---------- audit timeline ---------- */
+.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.meta-grid .kv b{display:block;color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:3px}
+.meta-grid .kv span{font-size:14px}
+.cyc{font-family:var(--mono);font-weight:600;color:var(--teal-d)}
+.timeline{position:relative;padding-left:8px}
+.tl-item{position:relative;padding:0 0 18px 26px;border-left:2px solid var(--line)}
+.tl-item:last-child{border-left-color:transparent;padding-bottom:0}
+.tl-dot{position:absolute;left:-7px;top:1px;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--muted)}
+.tl-dot.created{border-color:var(--info)}.tl-dot.submitted,.tl-dot.resubmitted{border-color:var(--warn)}
+.tl-dot.approved{border-color:var(--good)}.tl-dot.rejected{border-color:var(--bad)}.tl-dot.released{border-color:var(--teal);background:var(--teal)}
+.tl-dot.edited{border-color:var(--muted)}
+.tl-head{font-size:13.5px;font-weight:600}
+.tl-head .who{font-weight:400;color:var(--muted)}
+.tl-time{font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:1px}
+.tl-cmt{font-size:13px;color:var(--slate);margin-top:5px;background:#f7f9fb;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.tl-role{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:6px;background:var(--chip);color:var(--slate);margin-left:4px}
+.metaline{font-size:12px;color:var(--muted);margin-top:8px}
+.metaline b{color:var(--slate);font-weight:600}
+.await{font-size:13px;color:var(--warn);background:var(--warn-soft);border:1px solid #eedcb3;border-radius:8px;padding:10px 12px}
